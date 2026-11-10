@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError, pageUrl, type Page } from '../api'
 import { normalizePageName } from '../../shared/pageName'
 import { DocEditor, type DocEditorHandle } from '../editor/DocEditor'
@@ -18,6 +18,13 @@ type Loaded =
 export function PageRoute() {
   const params = useParams()
   const name = normalizePageName(params['*'] ?? '')
+  const { wiki } = useWiki()
+  // /w/<slug>/p/ (no page name) → the wiki's home, which forwards to its top page.
+  if (!name) return <Navigate to={`/w/${wiki.slug}`} replace />
+  return <PageRouteFor name={name} />
+}
+
+function PageRouteFor({ name }: { name: string }) {
   const { wiki } = useWiki()
   const nav = useNavigate()
   const [state, setState] = useState<Loaded>({ kind: 'loading' })
