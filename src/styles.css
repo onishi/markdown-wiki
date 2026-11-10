@@ -310,3 +310,15 @@ label.check { display: flex; gap: 8px; align-items: center; margin: 10px 0; font
 .slug-input input {
   width: 12em;
 }
+
+.new-wiki { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: center; margin: 24px 0 8px; }
+.new-wiki h3 { grid-column: 1 / -1; margin: 0 0 4px; }
+.new-wiki .field { display: contents; }
+.new-wiki .field-label { font-size: 14px; color: var(--fg-muted); }
+.new-wiki .field-hint { grid-column: 2; margin: 0; }
+.new-wiki .slug-input { display: flex; min-width: 0; }
+.new-wiki .slug-input input { flex: 1; min-width: 0; width: auto; }
+@media (max-width: 520px) {
+  .new-wiki { grid-template-columns: 1fr; }
+  .new-wiki .field-hint { grid-column: 1; }
+}
