@@ -30,7 +30,7 @@ npm run dev          # API (PORT=3000, DEV_LOGIN=1) + Vite (http://localhost:517
 1. Google Cloud Console →「API とサービス」→「認証情報」→「OAuth クライアント ID を作成」（種類: ウェブアプリケーション）。
 2. 承認済みのリダイレクト URI に `<APP_ORIGIN>/auth/google/callback` を登録（開発時は `http://localhost:5173/auth/google/callback`）。
 3. OAuth 同意画面でスコープ `openid` `email` `profile` を設定。
-4. 環境変数を設定して起動:
+4. `.env.example` を `.env` にコピーして値を設定（`.env` は git 管理外。実際の環境変数が優先）するか、環境変数で渡して起動:
 
 | 変数 | 説明 |
 |---|---|
@@ -48,6 +48,24 @@ APP_ORIGIN=https://wiki.example.com GOOGLE_CLIENT_ID=... GOOGLE_CLIENT_SECRET=..
 ```
 
 Node.js 24 以上が必要です（組み込みの `node:sqlite` を使用）。TLS は前段のリバースプロキシで終端してください。
+
+## Cloudflare へのデプロイ
+
+`worker/index.ts` が Cloudflare 用の入口です。サーバーのコード（`server/app.ts`）はそのまま共有します。
+
+- 画面（`dist/client`）は Workers Static Assets が配信します（SPA フォールバック）。
+- `/api/*` と `/auth/*` は 1 つの Durable Object が処理します。データは Durable Object 内蔵の SQLite に保存し、スキーマは Node 版と同じです。
+
+```sh
+npm run deploy                           # vite build && wrangler deploy
+npx wrangler secret put GOOGLE_CLIENT_ID
+npx wrangler secret put GOOGLE_CLIENT_SECRET
+```
+
+- `wrangler.jsonc` の `APP_ORIGIN` を公開 URL に合わせ、`<APP_ORIGIN>/auth/google/callback` を Google のリダイレクト URI に登録します。
+- 開発用ログインは https のオリジンでは常に無効です。
+- `npm run test:e2e:cf` で、同じ E2E テストを `wrangler dev`（ローカルの Durable Object）に対して実行できます。
+- 全 wiki を 1 つの Durable Object で処理するので、小〜中規模向けの構成です。
 
 ## テスト
 
@@ -112,6 +130,8 @@ GFM のブロックとは別概念として、ソース上の行範囲で定義�
 ### wiki リンクと階層
 
 `[[ページ名]]` / `[[ページ名|表示名]]`。テキストノードのみが対象なのでコード内では変換されず、`\[\[` のようにエスケープすれば無効化できます。ページ名の `/` が階層で、親ページなしで子ページを作れます（ツリーでは本文のない階層を斜体で表示）。改名すると旧名がエイリアスとして残るため、既存リンクは書き換えなくても切れません（任意で wiki 内のリンクを一括書き換えも可能）。
+
+オーナーは共有設定で wiki の**トップページ**を指定できます。ページ名のない wiki の URL（`/w/<id>`）を開くとトップページへリダイレクトします（未設定ならページ一覧）。トップページは id で保持するので改名しても外れず、削除すると未設定に戻ります。ページ一覧はサイドバーの「すべてのページ」（`/w/<id>?list`）から開けます。
 
 ### 権限
 

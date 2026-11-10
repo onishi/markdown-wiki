@@ -34,6 +34,9 @@ export interface WikiSummary {
   id: string
   name: string
   role: Role
+  /** Page shown at /w/:wid (null: the page list). */
+  topPageId?: string | null
+  topPage?: string | null
   pageCount?: number
   memberCount?: number
 }

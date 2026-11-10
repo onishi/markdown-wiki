@@ -1,0 +1,5 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "types": ["node"], "lib": ["ES2023"], "noEmit": true },
+  "include": ["./**/*.ts", "../server/app.ts", "../server/db.ts", "../server/auth.ts", "../shared/**/*.ts"]
+}

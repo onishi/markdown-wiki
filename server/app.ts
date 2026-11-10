@@ -207,16 +207,25 @@ export function createApp(db: DB, cfg: AppConfig) {
 
   app.get('/api/wikis/:wid', (c) => {
     const { wikiId, role } = need(c, 'viewer')
-    const w = db.prepare('SELECT id, name FROM wikis WHERE id = ?').get(wikiId)
+    const w = db
+      .prepare('SELECT w.id, w.name, p.id AS topPageId, p.name AS topPage FROM wikis w LEFT JOIN pages p ON p.id = w.top_page_id WHERE w.id = ?')
+      .get(wikiId) as object
     return c.json({ wiki: { ...w, role } })
   })
 
   app.patch('/api/wikis/:wid', async (c) => {
     const { wikiId } = need(c, 'owner')
-    const b = await body<{ name?: string }>(c)
-    const name = (b.name ?? '').trim()
-    if (!name || name.length > 100) return c.json({ error: 'invalid_name' }, 400)
-    db.prepare('UPDATE wikis SET name = ? WHERE id = ?').run(name, wikiId)
+    const b = await body<{ name?: string; topPageId?: string | null }>(c)
+    if (b.name !== undefined) {
+      const name = (b.name ?? '').trim()
+      if (!name || name.length > 100) return c.json({ error: 'invalid_name' }, 400)
+      db.prepare('UPDATE wikis SET name = ? WHERE id = ?').run(name, wikiId)
+    }
+    if (b.topPageId !== undefined) {
+      if (b.topPageId !== null && !db.prepare('SELECT 1 FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, b.topPageId))
+        return c.json({ error: 'not_found' }, 404)
+      db.prepare('UPDATE wikis SET top_page_id = ? WHERE id = ?').run(b.topPageId, wikiId)
+    }
     return c.json({ ok: true })
   })
 
