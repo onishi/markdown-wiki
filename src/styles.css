@@ -301,3 +301,12 @@ label.check { display: flex; gap: 8px; align-items: center; margin: 10px 0; font
 .doc.soft-breaks .raw { white-space: normal; }
 .doc-menu-key { float: right; margin-left: 16px; font-size: 11px; color: var(--fg-muted); }
 .doc-menu-heading { font-size: 11px; color: var(--fg-muted); padding: 2px 10px 0; }
+
+.slug-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.slug-input input {
+  width: 12em;
+}

@@ -8,7 +8,7 @@ export function WikiHome() {
   // A wiki URL without a page goes to the top page, if one is set (?list shows the page list).
   // Resolve by id from the live page list so a renamed top page still works.
   const top = wiki.topPageId ? (pages.find((p) => p.id === wiki.topPageId)?.name ?? wiki.topPage) : null
-  if (top && !params.has('list')) return <Navigate to={pageUrl(wiki.id, top)} replace />
+  if (top && !params.has('list')) return <Navigate to={pageUrl(wiki.slug, top)} replace />
   const recent = [...pages].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 10)
   return (
     <div className="page">
@@ -29,7 +29,7 @@ export function WikiHome() {
             <ul className="page-list">
               {recent.map((p) => (
                 <li key={p.id}>
-                  <Link to={pageUrl(wiki.id, p.name)}>{p.name}</Link>
+                  <Link to={pageUrl(wiki.slug, p.name)}>{p.name}</Link>
                   <span className="muted small">{new Date(p.updatedAt).toLocaleString('ja-JP')}</span>
                 </li>
               ))}
@@ -40,7 +40,7 @@ export function WikiHome() {
             <ul className="page-list">
               {pages.map((p) => (
                 <li key={p.id}>
-                  <Link to={pageUrl(wiki.id, p.name)}>{p.name}</Link>
+                  <Link to={pageUrl(wiki.slug, p.name)}>{p.name}</Link>
                 </li>
               ))}
             </ul>

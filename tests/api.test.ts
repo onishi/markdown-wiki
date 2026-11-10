@@ -142,6 +142,31 @@ describe('pages: save conflicts, rename, hierarchy', () => {
     expect((await b.put(`/api/wikis/${w.id}/pages/${p.id}`, { content: 'base\nA\nB\n', baseVersion: 2 })).status).toBe(200)
   })
 
+  it('wiki slug: unique, usable in place of the id, old slugs keep resolving', async () => {
+    const a = await login(app, 'a@example.com')
+    const out = await login(app, 'out@example.com')
+    const w = (await a.post('/api/wikis', { name: 'W', slug: 'Team-Notes' })).json.wiki
+    expect(w.slug).toBe('team-notes')
+    expect((await a.post('/api/wikis', { name: 'X', slug: 'team-notes' })).status).toBe(409)
+    expect((await a.post('/api/wikis', { name: 'X', slug: 'bad_slug' })).status).toBe(400)
+    expect((await a.post('/api/wikis', { name: 'X' })).json.wiki.slug).toMatch(/^w-[0-9a-f]{8}$/)
+    expect((await a.get('/api/wikis/team-notes')).json.wiki.id).toBe(w.id)
+    expect((await a.post('/api/wikis/team-notes/pages', { name: 'P' })).status).toBe(201)
+    // Outsiders can't tell an existing slug from a missing one.
+    expect((await out.get('/api/wikis/team-notes')).status).toBe(404)
+    expect((await out.get('/api/wikis/nothing-here')).status).toBe(404)
+    // Rename: old slug still resolves, and can't be taken by another wiki.
+    expect((await a.patch('/api/wikis/team-notes', { slug: 'notes' })).status).toBe(200)
+    expect((await a.get('/api/wikis/team-notes')).json.wiki.slug).toBe('notes')
+    expect((await out.post('/api/wikis', { name: 'Y', slug: 'team-notes' })).status).toBe(409)
+    // A rejected PATCH changes nothing.
+    expect((await a.patch(`/api/wikis/${w.id}`, { slug: 'n2', name: '' })).status).toBe(400)
+    expect((await a.get(`/api/wikis/${w.id}`)).json.wiki.slug).toBe('notes')
+    // Taking back a former slug works.
+    expect((await a.patch(`/api/wikis/${w.id}`, { slug: 'team-notes' })).status).toBe(200)
+    expect((await a.get('/api/wikis/notes')).json.wiki.slug).toBe('team-notes')
+  })
+
   it('top page: owner sets it by id, survives rename, cleared on delete', async () => {
     const a = await login(app, 'a@example.com')
     const w = (await a.post('/api/wikis', { name: 'W' })).json.wiki

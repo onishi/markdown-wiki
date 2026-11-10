@@ -243,3 +243,37 @@ test('top page: wiki URL without a page redirects there; page list stays reachab
   await page.goto(`/w/${wid}`)
   await expect(page.getByRole('heading', { name: /すべてのページ/ })).toBeVisible()
 })
+
+test('wiki slug: /w/<slug>/p/<page> URLs; changing it keeps old URLs working', async ({ browser }) => {
+  const page = await login(browser, uniq('slug'))
+  const slug = `team-${Date.now().toString(36)}`
+  await page.getByTestId('new-wiki-name').fill('スラッグ wiki')
+  await page.getByTestId('new-wiki-slug').fill(slug)
+  await page.getByRole('button', { name: 'wiki を作成' }).click()
+  await expect(page).toHaveURL(new RegExp(`/w/${slug}$`))
+  await newPage(page, '議事録')
+  await expect(page).toHaveURL(new RegExp(`/w/${slug}/p/${encodeURIComponent('議事録')}$`))
+
+  // A raw wiki id is redirected to the slug URL.
+  const id = (await apiCall(page, 'GET', `/api/wikis/${slug}`)).json.wiki.id
+  await page.goto(`/w/${id}/p/${encodeURIComponent('議事録')}#L1`)
+  await expect(page).toHaveURL(new RegExp(`/w/${slug}/p/${encodeURIComponent('議事録')}#L1$`))
+
+  // Change the slug in settings; the old URL forwards to the new one.
+  await page.goto(`/w/${slug}/settings`)
+  await page.getByTestId('wiki-slug').fill(`${slug}-new`)
+  await page.getByRole('button', { name: '変更' }).first().click()
+  await expect(page.getByText('識別子を変更しました。')).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`/w/${slug}-new/settings$`))
+  await page.goto(`/w/${slug}/p/${encodeURIComponent('議事録')}`)
+  await expect(page).toHaveURL(new RegExp(`/w/${slug}-new/p/${encodeURIComponent('議事録')}$`))
+  await expect(page.locator('.page-title')).toHaveText('議事録')
+
+  // Duplicate slugs are rejected with a message.
+  await page.goto('/')
+  await page.getByTestId('new-wiki-name').fill('別の wiki')
+  await page.getByTestId('new-wiki-slug').fill(`${slug}-new`)
+  await page.getByRole('button', { name: 'wiki を作成' }).click()
+  await expect(page.getByText(`識別子「${slug}-new」はすでに使われています。`)).toBeVisible()
+  await page.context().close()
+})

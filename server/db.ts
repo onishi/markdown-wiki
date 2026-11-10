@@ -64,6 +64,10 @@ CREATE TABLE IF NOT EXISTS pages (
   updated_by TEXT REFERENCES users(id),
   UNIQUE (wiki_id, name)
 );
+CREATE TABLE IF NOT EXISTS wiki_slug_aliases (
+  slug TEXT PRIMARY KEY,
+  wiki_id TEXT NOT NULL REFERENCES wikis(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS page_aliases (
   wiki_id TEXT NOT NULL REFERENCES wikis(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -89,6 +93,12 @@ function migrate(db: DB) {
   const cols = (db.prepare('PRAGMA table_info(wikis)').all() as { name: string }[]).map((c) => c.name)
   // The wiki's top page: /w/:wid redirects there. Stored by id so renames keep it.
   if (!cols.includes('top_page_id')) db.exec('ALTER TABLE wikis ADD COLUMN top_page_id TEXT REFERENCES pages(id) ON DELETE SET NULL')
+  // URL identifier: /w/<slug>. Old slugs stay in wiki_slug_aliases so links keep working.
+  if (!cols.includes('slug')) db.exec('ALTER TABLE wikis ADD COLUMN slug TEXT')
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS wikis_slug ON wikis(slug)')
+  for (const w of db.prepare('SELECT id FROM wikis WHERE slug IS NULL').all() as { id: string }[]) {
+    db.prepare('UPDATE wikis SET slug = ? WHERE id = ?').run(`w-${w.id.replace(/-/g, '').slice(0, 8)}`, w.id)
+  }
 }
 
 export function tx<T>(db: DB, fn: () => T): T {

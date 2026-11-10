@@ -32,6 +32,8 @@ export interface Me {
 }
 export interface WikiSummary {
   id: string
+  /** URL identifier: /w/<slug> */
+  slug: string
   name: string
   role: Role
   /** Page shown at /w/:wid (null: the page list). */
@@ -52,6 +54,7 @@ export interface Page extends PageSummary {
 }
 
 export const encodePath = (name: string) => name.split('/').map(encodeURIComponent).join('/')
-export const pageUrl = (wikiId: string, name: string) => `/w/${wikiId}/p/${encodePath(name)}`
+export const wikiUrl = (slug: string) => `/w/${slug}`
+export const pageUrl = (slug: string, name: string) => `/w/${slug}/p/${encodePath(name)}`
 
 export const ROLE_LABEL: Record<Role, string> = { owner: 'オーナー', editor: '編集者', viewer: '閲覧者' }

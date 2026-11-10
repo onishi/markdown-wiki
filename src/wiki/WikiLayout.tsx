@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError, pageUrl, ROLE_LABEL, type Me, type PageSummary, type Role, type WikiSummary } from '../api'
 import { buildTree, normalizePageName, type TreeNode } from '../../shared/pageName'
@@ -52,21 +52,33 @@ export function WikiLayout() {
     setWiki(r.wiki)
   }, [wid])
 
+  // Moving to the canonical slug of the wiki already shown (or a slug change) is not a new wiki.
+  const shownSlug = useRef<string | null>(null)
+  shownSlug.current = wiki?.slug ?? null
+
   useEffect(() => {
+    api<{ wikis: WikiSummary[] }>('GET', '/api/wikis').then((r) => setWikis(r.wikis))
+    try {
+      localStorage.setItem('mw:lastWiki', wid!)
+    } catch {}
+    if (shownSlug.current === wid) return
     setWiki(null)
     setError(null)
     reloadWiki()
       .catch((e) => setError(e instanceof ApiError && e.status === 404 ? 'この wiki は存在しないか、アクセス権がありません。' : '読み込みに失敗しました。'))
     reloadPages().catch(() => {})
-    api<{ wikis: WikiSummary[] }>('GET', '/api/wikis').then((r) => setWikis(r.wikis))
-    try {
-      localStorage.setItem('mw:lastWiki', wid!)
-    } catch {}
   }, [wid, reloadPages, reloadWiki])
 
+  // Old slugs and raw ids still open the wiki; show the canonical /w/<slug> URL.
+  const loc = useLocation()
+  useEffect(() => {
+    if (wiki && wid !== wiki.slug) nav(loc.pathname.replace(`/w/${wid}`, `/w/${wiki.slug}`) + loc.search + loc.hash, { replace: true })
+  }, [wiki, wid, loc, nav])
+
+  const slug = wiki?.slug ?? wid!
   const known = useMemo(() => new Set([...pages.map((p) => p.name), ...aliases.map((a) => a.name)]), [pages, aliases])
-  const resolveWiki = useCallback<WikiResolver>((t) => ({ href: pageUrl(wid!, t), exists: known.has(t) }), [wid, known])
-  const absoluteWiki = useCallback<WikiResolver>((t) => ({ href: location.origin + pageUrl(wid!, t), exists: true }), [wid])
+  const resolveWiki = useCallback<WikiResolver>((t) => ({ href: pageUrl(slug, t), exists: known.has(t) }), [slug, known])
+  const absoluteWiki = useCallback<WikiResolver>((t) => ({ href: location.origin + pageUrl(slug, t), exists: true }), [slug])
 
   if (error)
     return (
@@ -116,7 +128,7 @@ export function WikiLayout() {
               await reloadPages()
             }
             setNewPage(null)
-            nav(pageUrl(wid!, n))
+            nav(pageUrl(slug, n))
           }}
         />
       )}
@@ -154,12 +166,12 @@ function Sidebar({ wikis, outline }: { wikis: WikiSummary[]; outline: OutlineSou
       <div className="sidebar-top">
         <select
           className="wiki-switch"
-          value={wiki.id}
+          value={wiki.slug}
           aria-label="wiki を切り替え"
           onChange={(e) => (e.target.value === '__home' ? nav('/') : nav(`/w/${e.target.value}`))}
         >
           {wikis.map((w) => (
-            <option key={w.id} value={w.id}>
+            <option key={w.id} value={w.slug}>
               {w.name}
             </option>
           ))}
@@ -190,7 +202,7 @@ function Sidebar({ wikis, outline }: { wikis: WikiSummary[]; outline: OutlineSou
           </button>
         )}
         <nav className="tree" aria-label="ページ階層">
-          <NavLink end to={`/w/${wiki.id}?list`} className="tree-home">
+          <NavLink end to={`/w/${wiki.slug}?list`} className="tree-home">
             すべてのページ
           </NavLink>
           {tree.length === 0 && <div className="muted small tree-empty">{q ? '該当するページがありません' : 'ページはまだありません'}</div>}
@@ -199,7 +211,7 @@ function Sidebar({ wikis, outline }: { wikis: WikiSummary[]; outline: OutlineSou
         </>
       )}
       <div className="sidebar-bottom">
-        <NavLink to={`/w/${wiki.id}/settings`} className="side-link">
+        <NavLink to={`/w/${wiki.slug}/settings`} className="side-link">
           共有設定・メンバー
         </NavLink>
         <UserMenu email={me.user.email} onLogout={logout} />
@@ -221,7 +233,7 @@ function TreeList({ nodes, forceOpen }: { nodes: TreeNode[]; forceOpen: boolean 
 function TreeItem({ node, forceOpen }: { node: TreeNode; forceOpen: boolean }) {
   const { wiki } = useWiki()
   const loc = useLocation()
-  const url = pageUrl(wiki.id, node.name)
+  const url = pageUrl(wiki.slug, node.name)
   const current = decodeURIComponent(loc.pathname) === decodeURIComponent(url)
   const inPath = decodeURIComponent(loc.pathname).startsWith(decodeURIComponent(url) + '/')
   const [open, setOpen] = useState(inPath)
