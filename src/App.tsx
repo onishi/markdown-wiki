@@ -158,18 +158,27 @@ function Home() {
           </ul>
         )}
       </section>
-      <form className="inline-form" onSubmit={create}>
-        <input placeholder="新しい wiki の名前" value={name} onChange={(e) => setName(e.target.value)} data-testid="new-wiki-name" />
-        <span className="slug-input">
-          <span className="muted">/w/</span>
-          <input placeholder="識別子（省略可）" value={slug} onChange={(e) => (setSlug(e.target.value), setErr(null))} data-testid="new-wiki-slug" aria-label="URL の識別子" />
-        </span>
-        <button className="btn btn-primary" type="submit">
-          wiki を作成
-        </button>
+      <form className="new-wiki" onSubmit={create}>
+        <h3>新しい wiki</h3>
+        <label className="field">
+          <span className="field-label">名前</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} data-testid="new-wiki-name" />
+        </label>
+        <label className="field">
+          <span className="field-label">URL</span>
+          <span className="slug-input">
+            <span className="muted">{location.host}/w/</span>
+            <input placeholder="識別子（省略可）" value={slug} onChange={(e) => (setSlug(e.target.value), setErr(null))} data-testid="new-wiki-slug" aria-label="URL の識別子" />
+          </span>
+        </label>
+        <p className="field-hint muted small">半角英小文字・数字・ハイフン。省略すると自動で付きます。あとから共有設定で変更できます。</p>
+        {err && <div className="notice field-hint">{err}</div>}
+        <div className="field-hint">
+          <button className="btn btn-primary" type="submit">
+            wiki を作成
+          </button>
+        </div>
       </form>
-      {err && <div className="notice">{err}</div>}
-      <p className="muted small">識別子は URL（/w/識別子/p/ページ名）に使われます。半角英小文字・数字・ハイフンで、省略すると自動で付きます。あとから共有設定で変更できます。</p>
       <p className="muted small">新しい wiki は非公開で作成され、あなたがオーナーになります。あとから共有設定でメンバーを招待できます。</p>
     </div>
   )
