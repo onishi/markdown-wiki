@@ -233,6 +233,10 @@ test('top page: wiki URL without a page redirects there; page list stays reachab
   await expect(page).toHaveURL(new RegExp(`/w/${wid}/p/${encodeURIComponent('はじめに')}$`))
   await expect(page.locator('.page-title')).toHaveText('はじめに')
 
+  // An empty page name (/w/<slug>/p/) also goes to the top page.
+  await page.goto(`/w/${wid}/p/`)
+  await expect(page).toHaveURL(new RegExp(`/p/${encodeURIComponent('はじめに')}$`))
+
   await page.getByRole('link', { name: 'すべてのページ' }).click()
   await expect(page.getByRole('heading', { name: /すべてのページ/ })).toBeVisible()
 
