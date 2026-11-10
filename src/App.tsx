@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { api, ApiError, type Me, type WikiSummary, ROLE_LABEL } from './api'
+import { api, ApiError, type Me, type WikiSummary, ROLE_LABEL, wikiUrl } from './api'
+import { normalizeSlug, validateSlug } from '../shared/wikiSlug'
 import { Playground } from './Playground'
 import { WikiLayout } from './wiki/WikiLayout'
 import { PageRoute } from './wiki/PageView'
@@ -109,6 +110,8 @@ function Home() {
   const { me, logout } = useSession()
   const [wikis, setWikis] = useState<WikiSummary[] | null>(null)
   const [name, setName] = useState('')
+  const [slug, setSlug] = useState('')
+  const [err, setErr] = useState<string | null>(null)
   const nav = useNavigate()
   useEffect(() => {
     api<{ wikis: WikiSummary[] }>('GET', '/api/wikis').then((r) => setWikis(r.wikis))
@@ -116,8 +119,15 @@ function Home() {
   const create = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) return
-    const r = await api<{ wiki: WikiSummary }>('POST', '/api/wikis', { name })
-    nav(`/w/${r.wiki.id}`)
+    const s = normalizeSlug(slug)
+    const bad = s ? validateSlug(s) : null
+    if (bad) return setErr(`識別子: ${bad}`)
+    try {
+      const r = await api<{ wiki: WikiSummary }>('POST', '/api/wikis', { name, slug: s || undefined })
+      nav(wikiUrl(r.wiki.slug))
+    } catch (e) {
+      setErr((e as ApiError).body?.error === 'slug_taken' ? `識別子「${s}」はすでに使われています。` : 'wiki を作成できませんでした。')
+    }
   }
   return (
     <div className="home">
@@ -137,7 +147,7 @@ function Home() {
           <ul className="wiki-list">
             {wikis.map((w) => (
               <li key={w.id}>
-                <a href={`/w/${w.id}`} onClick={(e) => (e.preventDefault(), nav(`/w/${w.id}`))}>
+                <a href={wikiUrl(w.slug)} onClick={(e) => (e.preventDefault(), nav(wikiUrl(w.slug)))}>
                   {w.name}
                 </a>
                 <span className="muted small">
@@ -150,10 +160,16 @@ function Home() {
       </section>
       <form className="inline-form" onSubmit={create}>
         <input placeholder="新しい wiki の名前" value={name} onChange={(e) => setName(e.target.value)} data-testid="new-wiki-name" />
+        <span className="slug-input">
+          <span className="muted">/w/</span>
+          <input placeholder="識別子（省略可）" value={slug} onChange={(e) => (setSlug(e.target.value), setErr(null))} data-testid="new-wiki-slug" aria-label="URL の識別子" />
+        </span>
         <button className="btn btn-primary" type="submit">
           wiki を作成
         </button>
       </form>
+      {err && <div className="notice">{err}</div>}
+      <p className="muted small">識別子は URL（/w/識別子/p/ページ名）に使われます。半角英小文字・数字・ハイフンで、省略すると自動で付きます。あとから共有設定で変更できます。</p>
       <p className="muted small">新しい wiki は非公開で作成され、あなたがオーナーになります。あとから共有設定でメンバーを招待できます。</p>
     </div>
   )

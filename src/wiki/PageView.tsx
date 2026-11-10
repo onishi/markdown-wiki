@@ -30,7 +30,7 @@ export function PageRoute() {
       .then(async (r) => {
         if (!alive) return
         if (r.via === 'alias') {
-          nav(pageUrl(wiki.id, r.page.name), { replace: true, state: { renamedFrom: name } })
+          nav(pageUrl(wiki.slug, r.page.name), { replace: true, state: { renamedFrom: name } })
           return
         }
         const draft = readDraft(r.page.id)
@@ -81,7 +81,7 @@ function Breadcrumb({ name }: { name: string }) {
         return (
           <span key={path}>
             {i > 0 && <span className="sep">/</span>}
-            {i === segs.length - 1 ? <span className="crumb-current">{s}</span> : <Link to={pageUrl(wiki.id, path)}>{s}</Link>}
+            {i === segs.length - 1 ? <span className="crumb-current">{s}</span> : <Link to={pageUrl(wiki.slug, path)}>{s}</Link>}
           </span>
         )
       })}
@@ -123,7 +123,7 @@ function MissingPage({ name, children, onCreated }: { name: string; children: { 
           <ul>
             {children.map((c) => (
               <li key={c.id}>
-                <Link to={pageUrl(wiki.id, c.name)}>{c.name.slice(name.length + 1)}</Link>
+                <Link to={pageUrl(wiki.slug, c.name)}>{c.name.slice(name.length + 1)}</Link>
               </li>
             ))}
           </ul>
@@ -173,7 +173,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
   useEffect(() => () => setOutline(null), [setOutline])
 
   const childPages = useMemo(() => pages.filter((p) => p.name.startsWith(page.name + '/')), [pages, page.name])
-  const openWiki = useCallback((t: string) => nav(pageUrl(wiki.id, t)), [nav, wiki.id])
+  const openWiki = useCallback((t: string) => nav(pageUrl(wiki.slug, t)), [nav, wiki.slug])
 
   return (
     <div className="page">
@@ -224,7 +224,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           <ul>
             {childPages.map((c) => (
               <li key={c.id}>
-                <Link to={pageUrl(wiki.id, c.name)}>{c.name.slice(page.name.length + 1)}</Link>
+                <Link to={pageUrl(wiki.slug, c.name)}>{c.name.slice(page.name.length + 1)}</Link>
               </li>
             ))}
           </ul>
@@ -249,7 +249,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           onDone={async (newName) => {
             await reloadPages()
             setDialog(null)
-            nav(pageUrl(wiki.id, newName), { replace: true })
+            nav(pageUrl(wiki.slug, newName), { replace: true })
           }}
         />
       )}
@@ -270,7 +270,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
                   localStorage.removeItem(`mw:draft:${page.id}`)
                 } catch {}
                 await reloadPages()
-                nav(`/w/${wiki.id}`)
+                nav(`/w/${wiki.slug}`)
               }}
             >
               削除する

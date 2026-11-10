@@ -15,6 +15,7 @@ import {
   upsertGoogleUser,
 } from './auth.js'
 import { validatePageName } from '../shared/pageName.js'
+import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
 import { rewriteWikiLinks } from '../shared/markdown/wikilinks.js'
 
 export type Role = 'owner' | 'editor' | 'viewer'
@@ -148,8 +149,30 @@ export function createApp(db: DB, cfg: AppConfig) {
   }
 
   /** Server-side authorisation for every wiki-scoped request. 404 hides existence. */
+  /** :wid may be the wiki id, its slug, or a former slug. Unknown and non-member look the same (404). */
+  function resolveWikiId(param: string): string | null {
+    const w = db.prepare('SELECT id FROM wikis WHERE id = ? OR slug = ?').get(param, param) as { id: string } | undefined
+    if (w) return w.id
+    const a = db.prepare('SELECT wiki_id FROM wiki_slug_aliases WHERE slug = ?').get(param) as { wiki_id: string } | undefined
+    return a?.wiki_id ?? null
+  }
+
+  /** Error code if `slug` can't be used by wiki `wikiId` (null: new wiki). */
+  function slugProblem(slug: string, wikiId: string | null): 'invalid_slug' | 'slug_taken' | null {
+    if (validateSlug(slug)) return 'invalid_slug'
+    const owner = resolveWikiId(slug)
+    return owner && owner !== wikiId ? 'slug_taken' : null
+  }
+
+  function randomSlug(): string {
+    for (;;) {
+      const s = `w-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`
+      if (!resolveWikiId(s)) return s
+    }
+  }
+
   function need(c: Context<Env>, min: Role): { wikiId: string; role: Role } {
-    const wikiId = c.req.param('wid')!
+    const wikiId = resolveWikiId(c.req.param('wid')!) ?? ''
     const role = roleOf(c.get('user').id, wikiId)
     if (!role) throw new HTTPException(404, { message: 'not_found' })
     if (RANK[role] < RANK[min]) throw new HTTPException(403, { message: 'forbidden' })
@@ -184,7 +207,7 @@ export function createApp(db: DB, cfg: AppConfig) {
   app.get('/api/wikis', (c) => {
     const rows = db
       .prepare(
-        `SELECT w.id, w.name, m.role, (SELECT COUNT(*) FROM pages p WHERE p.wiki_id = w.id) AS pageCount,
+        `SELECT w.id, w.slug, w.name, m.role, (SELECT COUNT(*) FROM pages p WHERE p.wiki_id = w.id) AS pageCount,
                 (SELECT COUNT(*) FROM memberships mm WHERE mm.wiki_id = w.id) AS memberCount
          FROM wikis w JOIN memberships m ON m.wiki_id = w.id WHERE m.user_id = ? ORDER BY w.created_at`,
       )
@@ -193,39 +216,52 @@ export function createApp(db: DB, cfg: AppConfig) {
   })
 
   app.post('/api/wikis', async (c) => {
-    const b = await body<{ name?: string }>(c)
+    const b = await body<{ name?: string; slug?: string }>(c)
     const name = (b.name ?? '').trim()
     if (!name || name.length > 100) return c.json({ error: 'invalid_name' }, 400)
+    const slug = b.slug?.trim() ? normalizeSlug(b.slug) : randomSlug()
+    const bad = slugProblem(slug, null)
+    if (bad) return c.json({ error: bad }, bad === 'slug_taken' ? 409 : 400)
     const id = crypto.randomUUID()
     const now = Date.now()
     tx(db, () => {
-      db.prepare('INSERT INTO wikis (id, name, created_by, created_at) VALUES (?, ?, ?, ?)').run(id, name, c.get('user').id, now)
+      db.prepare('INSERT INTO wikis (id, slug, name, created_by, created_at) VALUES (?, ?, ?, ?, ?)').run(id, slug, name, c.get('user').id, now)
       db.prepare('INSERT INTO memberships (wiki_id, user_id, role, created_at) VALUES (?, ?, ?, ?)').run(id, c.get('user').id, 'owner', now)
     })
-    return c.json({ wiki: { id, name, role: 'owner' } }, 201)
+    return c.json({ wiki: { id, slug, name, role: 'owner' } }, 201)
   })
 
   app.get('/api/wikis/:wid', (c) => {
     const { wikiId, role } = need(c, 'viewer')
     const w = db
-      .prepare('SELECT w.id, w.name, p.id AS topPageId, p.name AS topPage FROM wikis w LEFT JOIN pages p ON p.id = w.top_page_id WHERE w.id = ?')
+      .prepare('SELECT w.id, w.slug, w.name, p.id AS topPageId, p.name AS topPage FROM wikis w LEFT JOIN pages p ON p.id = w.top_page_id WHERE w.id = ?')
       .get(wikiId) as object
     return c.json({ wiki: { ...w, role } })
   })
 
   app.patch('/api/wikis/:wid', async (c) => {
     const { wikiId } = need(c, 'owner')
-    const b = await body<{ name?: string; topPageId?: string | null }>(c)
-    if (b.name !== undefined) {
-      const name = (b.name ?? '').trim()
-      if (!name || name.length > 100) return c.json({ error: 'invalid_name' }, 400)
-      db.prepare('UPDATE wikis SET name = ? WHERE id = ?').run(name, wikiId)
+    const b = await body<{ name?: string; slug?: string; topPageId?: string | null }>(c)
+    // Validate everything first so a rejected request changes nothing.
+    const name = b.name?.trim()
+    if (name !== undefined && (!name || name.length > 100)) return c.json({ error: 'invalid_name' }, 400)
+    const slug = b.slug !== undefined ? normalizeSlug(b.slug) : undefined
+    if (slug !== undefined) {
+      const bad = slugProblem(slug, wikiId)
+      if (bad) return c.json({ error: bad }, bad === 'slug_taken' ? 409 : 400)
     }
-    if (b.topPageId !== undefined) {
-      if (b.topPageId !== null && !db.prepare('SELECT 1 FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, b.topPageId))
-        return c.json({ error: 'not_found' }, 404)
-      db.prepare('UPDATE wikis SET top_page_id = ? WHERE id = ?').run(b.topPageId, wikiId)
-    }
+    if (b.topPageId && !db.prepare('SELECT 1 FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, b.topPageId)) return c.json({ error: 'not_found' }, 404)
+    tx(db, () => {
+      if (name !== undefined) db.prepare('UPDATE wikis SET name = ? WHERE id = ?').run(name, wikiId)
+      if (b.topPageId !== undefined) db.prepare('UPDATE wikis SET top_page_id = ? WHERE id = ?').run(b.topPageId, wikiId)
+      const old = (db.prepare('SELECT slug FROM wikis WHERE id = ?').get(wikiId) as { slug: string }).slug
+      if (slug !== undefined && slug !== old) {
+        // The old slug keeps redirecting; reclaiming one of this wiki's former slugs is allowed.
+        db.prepare('DELETE FROM wiki_slug_aliases WHERE slug = ?').run(slug)
+        db.prepare('UPDATE wikis SET slug = ? WHERE id = ?').run(slug, wikiId)
+        db.prepare('INSERT INTO wiki_slug_aliases (slug, wiki_id) VALUES (?, ?)').run(old, wikiId)
+      }
+    })
     return c.json({ ok: true })
   })
 

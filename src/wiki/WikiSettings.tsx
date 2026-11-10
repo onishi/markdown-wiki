@@ -4,6 +4,7 @@ import { api, ApiError, ROLE_LABEL, type Role } from '../api'
 import { useSession } from '../App'
 import { useWiki } from './WikiLayout'
 import { Modal } from './Modal'
+import { normalizeSlug, validateSlug } from '../../shared/wikiSlug'
 
 interface Member {
   userId: string
@@ -21,6 +22,8 @@ const ERRORS: Record<string, string> = {
   already_member: 'すでにメンバーです。',
   invalid_email: 'メールアドレスが正しくありません。',
   forbidden: '権限がありません。',
+  slug_taken: 'その識別子はすでに使われています。',
+  invalid_slug: '識別子は半角英小文字・数字・ハイフンで 2〜32 文字にしてください。',
 }
 
 export function WikiSettings() {
@@ -34,6 +37,7 @@ export function WikiSettings() {
   const [newRole, setNewRole] = useState<Role>('editor')
   const [msg, setMsg] = useState<string | null>(null)
   const [name, setName] = useState(wiki.name)
+  const [slug, setSlug] = useState(wiki.slug)
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   const load = useCallback(async () => {
@@ -162,6 +166,34 @@ export function WikiSettings() {
                 </option>
               ))}
             </select>
+          </section>
+          <section>
+            <h3>URL の識別子</h3>
+            <p className="muted small">
+              ページの URL は <code>{location.origin}/w/{wiki.slug}/p/ページ名</code> です。変更しても、前の識別子の URL は新しい識別子へ転送されます。
+            </p>
+            <form
+              className="inline-form"
+              onSubmit={(e) => {
+                e.preventDefault()
+                const s = normalizeSlug(slug)
+                const bad = validateSlug(s)
+                if (bad) return setMsg(`識別子: ${bad}`)
+                run(async () => {
+                  await api('PATCH', `/api/wikis/${wiki.id}`, { slug: s })
+                  await reloadWiki()
+                  nav(`/w/${s}/settings`, { replace: true })
+                }, '識別子を変更しました。')
+              }}
+            >
+              <span className="slug-input">
+                <span className="muted">/w/</span>
+                <input value={slug} onChange={(e) => setSlug(e.target.value)} data-testid="wiki-slug" aria-label="URL の識別子" />
+              </span>
+              <button className="btn" type="submit">
+                変更
+              </button>
+            </form>
           </section>
           <section>
             <h3>wiki の名前</h3>
