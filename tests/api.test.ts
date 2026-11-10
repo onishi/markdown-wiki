@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { openDb } from '../server/db'
+import { openDb } from '../server/db-node'
 import { createApp } from '../server/app'
 
 const ORIGIN = 'http://localhost:5173'
@@ -140,6 +140,23 @@ describe('pages: save conflicts, rename, hierarchy', () => {
     expect((await a.get(`/api/wikis/${w.id}/pages/${p.id}`)).json.page.content).toBe('base\nA\n')
     // Resolving against the current version succeeds.
     expect((await b.put(`/api/wikis/${w.id}/pages/${p.id}`, { content: 'base\nA\nB\n', baseVersion: 2 })).status).toBe(200)
+  })
+
+  it('top page: owner sets it by id, survives rename, cleared on delete', async () => {
+    const a = await login(app, 'a@example.com')
+    const w = (await a.post('/api/wikis', { name: 'W' })).json.wiki
+    await a.post(`/api/wikis/${w.id}/invitations`, { email: 'b@example.com', role: 'editor' })
+    const b = await login(app, 'b@example.com')
+    const p = (await a.post(`/api/wikis/${w.id}/pages`, { name: 'Home' })).json.page
+    expect((await a.get(`/api/wikis/${w.id}`)).json.wiki.topPageId).toBeNull()
+    expect((await b.patch(`/api/wikis/${w.id}`, { topPageId: p.id })).status).toBe(403)
+    expect((await a.patch(`/api/wikis/${w.id}`, { topPageId: 'nope' })).status).toBe(404)
+    expect((await a.patch(`/api/wikis/${w.id}`, { topPageId: p.id })).status).toBe(200)
+    expect((await a.get(`/api/wikis/${w.id}`)).json.wiki).toMatchObject({ name: 'W', topPageId: p.id, topPage: 'Home' })
+    await a.post(`/api/wikis/${w.id}/pages/${p.id}/rename`, { name: 'トップ' })
+    expect((await b.get(`/api/wikis/${w.id}`)).json.wiki.topPage).toBe('トップ')
+    await a.del(`/api/wikis/${w.id}/pages/${p.id}`)
+    expect((await a.get(`/api/wikis/${w.id}`)).json.wiki.topPageId).toBeNull()
   })
 
   it('creates child pages without a parent page and resolves names', async () => {

@@ -7,9 +7,11 @@
     "dev:server": "tsx watch server/index.ts",
     "build": "vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit -p . && tsc -p worker",
     "test": "vitest run",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "deploy": "vite build && wrangler deploy",
+    "test:e2e:cf": "vite build && playwright test -c playwright.cloudflare.config.ts"
   },
   "repository": {
     "type": "git",
@@ -50,7 +52,8 @@
     "concurrently": "^10.0.6",
     "typescript": "^7.0.2",
     "vite": "^8.3.6",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "wrangler": "^4.158.0"
   },
   "private": true
 }

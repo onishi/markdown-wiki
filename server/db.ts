@@ -1,11 +1,21 @@
-import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'node:fs'
-import { dirname } from 'node:path'
+/**
+ * Minimal synchronous SQLite interface shared by the Node server (node:sqlite, db-node.ts)
+ * and the Cloudflare Durable Object (storage.sql, worker/index.ts).
+ */
+export type SqlParam = string | number | null
+export interface Stmt {
+  get(...params: SqlParam[]): unknown
+  all(...params: SqlParam[]): unknown[]
+  run(...params: SqlParam[]): { changes: number }
+}
+export interface DB {
+  prepare(sql: string): Stmt
+  exec(sql: string): void
+  transaction<T>(fn: () => T): T
+}
 
-export type DB = DatabaseSync
-
-const SCHEMA = `
-PRAGMA foreign_keys = ON;
+/** Foreign keys must be enforced (ON DELETE CASCADE / SET NULL); the backend turns them on. */
+export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   google_sub TEXT UNIQUE NOT NULL,
@@ -70,22 +80,17 @@ CREATE TABLE IF NOT EXISTS page_revisions (
 );
 `
 
-export function openDb(path: string): DB {
-  if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
-  const db = new DatabaseSync(path)
-  db.exec('PRAGMA journal_mode = WAL;')
-  db.exec(SCHEMA)
-  return db
+export function initSchema(db: DB) {
+  for (const stmt of SCHEMA.split(';').map((x) => x.trim()).filter(Boolean)) db.exec(stmt)
+  migrate(db)
+}
+
+function migrate(db: DB) {
+  const cols = (db.prepare('PRAGMA table_info(wikis)').all() as { name: string }[]).map((c) => c.name)
+  // The wiki's top page: /w/:wid redirects there. Stored by id so renames keep it.
+  if (!cols.includes('top_page_id')) db.exec('ALTER TABLE wikis ADD COLUMN top_page_id TEXT REFERENCES pages(id) ON DELETE SET NULL')
 }
 
 export function tx<T>(db: DB, fn: () => T): T {
-  db.exec('BEGIN IMMEDIATE')
-  try {
-    const r = fn()
-    db.exec('COMMIT')
-    return r
-  } catch (e) {
-    db.exec('ROLLBACK')
-    throw e
-  }
+  return db.transaction(fn)
 }

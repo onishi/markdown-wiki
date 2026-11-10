@@ -170,7 +170,8 @@ test('save failure keeps the text and can be retried', async ({ browser }) => {
   await page.reload()
   await expect(page.locator('[data-testid=doc]')).toContainText('失われてはいけない文章')
   await page.unroute('**/api/wikis/*/pages/*')
-  await page.getByTestId('retry-save').click().catch(() => {})
+  // The draft may already have been re-saved automatically; otherwise retry by hand.
+  await page.getByTestId('retry-save').click({ timeout: 3000 }).catch(() => {})
   await saved(page)
   const pages = (await apiCall(page, 'GET', `/api/wikis/${wid}/pages`)).json.pages
   const p = (await apiCall(page, 'GET', `/api/wikis/${wid}/pages/${pages[0].id}`)).json.page
@@ -217,4 +218,28 @@ test('concurrent edits: conflict detected, nothing overwritten, merged', async (
   await expect(a.locator('[data-testid=doc]')).toContainText('Bが追記')
   await a.context().close()
   await b.context().close()
+})
+
+test('top page: wiki URL without a page redirects there; page list stays reachable', async ({ browser }) => {
+  const page = await login(browser, uniq('top'))
+  const wid = await createWiki(page, 'トップ wiki')
+  await newPage(page, 'はじめに')
+  await newPage(page, 'メモ')
+  await page.goto(`/w/${wid}/settings`)
+  await page.getByTestId('top-page').selectOption({ label: 'はじめに' })
+  await expect(page.getByText('トップページを変更しました。')).toBeVisible()
+
+  await page.goto(`/w/${wid}`)
+  await expect(page).toHaveURL(new RegExp(`/w/${wid}/p/${encodeURIComponent('はじめに')}$`))
+  await expect(page.locator('.page-title')).toHaveText('はじめに')
+
+  await page.getByRole('link', { name: 'すべてのページ' }).click()
+  await expect(page.getByRole('heading', { name: /すべてのページ/ })).toBeVisible()
+
+  // Unset: back to the page list.
+  await page.goto(`/w/${wid}/settings`)
+  await page.getByTestId('top-page').selectOption('')
+  await expect(page.getByText('トップページを変更しました。')).toBeVisible()
+  await page.goto(`/w/${wid}`)
+  await expect(page.getByRole('heading', { name: /すべてのページ/ })).toBeVisible()
 })

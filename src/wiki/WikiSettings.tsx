@@ -24,7 +24,7 @@ const ERRORS: Record<string, string> = {
 }
 
 export function WikiSettings() {
-  const { wiki, role } = useWiki()
+  const { wiki, role, pages, reloadWiki } = useWiki()
   const { me } = useSession()
   const nav = useNavigate()
   const isOwner = role === 'owner'
@@ -148,8 +148,24 @@ export function WikiSettings() {
             <p className="muted small">オーナー: メンバーと権限の管理 / 編集者: ページの作成・編集・削除 / 閲覧者: 閲覧とコピー</p>
           </section>
           <section>
+            <h3>トップページ</h3>
+            <p className="muted small">wiki の URL（ページ名なし）を開いたときに表示するページです。未設定ならページ一覧を表示します。</p>
+            <select
+              value={wiki.topPageId ?? ''}
+              data-testid="top-page"
+              onChange={(e) => run(async () => (await api('PATCH', `/api/wikis/${wiki.id}`, { topPageId: e.target.value || null }), await reloadWiki()), 'トップページを変更しました。')}
+            >
+              <option value="">（なし：ページ一覧）</option>
+              {pages.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </section>
+          <section>
             <h3>wiki の名前</h3>
-            <form className="inline-form" onSubmit={(e) => (e.preventDefault(), run(() => api('PATCH', `/api/wikis/${wiki.id}`, { name }), '名前を変更しました（再読み込みで反映）。'))}>
+            <form className="inline-form" onSubmit={(e) => (e.preventDefault(), run(async () => (await api('PATCH', `/api/wikis/${wiki.id}`, { name }), await reloadWiki()), '名前を変更しました。'))}>
               <input value={name} onChange={(e) => setName(e.target.value)} />
               <button className="btn" type="submit">
                 変更

@@ -21,6 +21,7 @@ interface WikiCtxValue {
   pages: PageSummary[]
   aliases: { name: string; pageId: string }[]
   reloadPages: () => Promise<void>
+  reloadWiki: () => Promise<void>
   resolveWiki: WikiResolver
   absoluteWiki: WikiResolver
   openNewPage: (prefill?: string) => void
@@ -46,18 +47,22 @@ export function WikiLayout() {
     setAliases(r.aliases)
   }, [wid])
 
+  const reloadWiki = useCallback(async () => {
+    const r = await api<{ wiki: WikiSummary }>('GET', `/api/wikis/${wid}`)
+    setWiki(r.wiki)
+  }, [wid])
+
   useEffect(() => {
     setWiki(null)
     setError(null)
-    api<{ wiki: WikiSummary }>('GET', `/api/wikis/${wid}`)
-      .then((r) => setWiki(r.wiki))
+    reloadWiki()
       .catch((e) => setError(e instanceof ApiError && e.status === 404 ? 'この wiki は存在しないか、アクセス権がありません。' : '読み込みに失敗しました。'))
     reloadPages().catch(() => {})
     api<{ wikis: WikiSummary[] }>('GET', '/api/wikis').then((r) => setWikis(r.wikis))
     try {
       localStorage.setItem('mw:lastWiki', wid!)
     } catch {}
-  }, [wid, reloadPages])
+  }, [wid, reloadPages, reloadWiki])
 
   const known = useMemo(() => new Set([...pages.map((p) => p.name), ...aliases.map((a) => a.name)]), [pages, aliases])
   const resolveWiki = useCallback<WikiResolver>((t) => ({ href: pageUrl(wid!, t), exists: known.has(t) }), [wid, known])
@@ -80,6 +85,7 @@ export function WikiLayout() {
     pages,
     aliases,
     reloadPages,
+    reloadWiki,
     resolveWiki,
     absoluteWiki,
     openNewPage: (prefill = '') => setNewPage(prefill),
@@ -184,7 +190,7 @@ function Sidebar({ wikis, outline }: { wikis: WikiSummary[]; outline: OutlineSou
           </button>
         )}
         <nav className="tree" aria-label="ページ階層">
-          <NavLink end to={`/w/${wiki.id}`} className="tree-home">
+          <NavLink end to={`/w/${wiki.id}?list`} className="tree-home">
             すべてのページ
           </NavLink>
           {tree.length === 0 && <div className="muted small tree-empty">{q ? '該当するページがありません' : 'ページはまだありません'}</div>}

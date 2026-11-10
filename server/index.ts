@@ -1,8 +1,15 @@
 import { serve } from '@hono/node-server'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { readFileSync, existsSync } from 'node:fs'
-import { openDb } from './db.js'
+import { openDb } from './db-node.js'
 import { createApp } from './app.js'
+
+// Local secrets (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET …) can live in .env (gitignored).
+try {
+  process.loadEnvFile('.env')
+} catch {
+  // no .env: use the real environment only
+}
 
 const port = Number(process.env.PORT ?? 3000)
 const prod = process.env.NODE_ENV === 'production'
