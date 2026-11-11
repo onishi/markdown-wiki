@@ -79,10 +79,21 @@ function PageRouteFor({ name }: { name: string }) {
 }
 
 function Breadcrumb({ name }: { name: string }) {
-  const { wiki } = useWiki()
+  const { wiki, pages } = useWiki()
   const segs = name.split('/')
+  // Root crumb: the wiki's top page (or the wiki itself), unless this page is the top page or under it.
+  const top = wiki.topPageId ? (pages.find((p) => p.id === wiki.topPageId)?.name ?? wiki.topPage ?? null) : null
+  const showRoot = !top || (name !== top && !name.startsWith(top + '/'))
   return (
-    <nav className="breadcrumb" aria-label="階層">
+    <nav className="breadcrumb" aria-label="階層" data-testid="breadcrumb">
+      {showRoot && (
+        <span>
+          <Link to={`/w/${wiki.slug}`} className="crumb-root">
+            {top ?? wiki.name}
+          </Link>
+          <span className="sep">/</span>
+        </span>
+      )}
       {segs.map((s, i) => {
         const path = segs.slice(0, i + 1).join('/')
         return (
