@@ -149,6 +149,12 @@ export function createApp(db: DB, cfg: AppConfig) {
   }
 
   /** Server-side authorisation for every wiki-scoped request. 404 hides existence. */
+  /**
+   * "name is under prefix" with exact matching. (LIKE would ignore ASCII case, so `LISA`
+   * would pick up `lisa/…`; page names distinguish case and full/half width.) Binds prefix twice.
+   */
+  const UNDER = 'substr(name, 1, length(?)) = ?'
+
   /** :wid may be the wiki id, its slug, or a former slug. Unknown and non-member look the same (404). */
   function resolveWikiId(param: string): string | null {
     const w = db.prepare('SELECT id FROM wikis WHERE id = ? OR slug = ?').get(param, param) as { id: string } | undefined
@@ -357,7 +363,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (direct) return c.json({ page: pageRow(wikiId, direct.id), via: 'name' })
     const alias = db.prepare('SELECT page_id FROM page_aliases WHERE wiki_id = ? AND name = ?').get(wikiId, name) as { page_id: string } | undefined
     if (alias) return c.json({ page: pageRow(wikiId, alias.page_id), via: 'alias' })
-    const children = db.prepare("SELECT id, name FROM pages WHERE wiki_id = ? AND name LIKE ? ESCAPE '\\' ORDER BY name").all(wikiId, `${name.replace(/[\\%_]/g, (m) => '\\' + m)}/%`)
+    const children = db.prepare(`SELECT id, name FROM pages WHERE wiki_id = ? AND ${UNDER} ORDER BY name`).all(wikiId, `${name}/`, `${name}/`)
     return c.json({ page: null, name, children }, 404)
   })
 
@@ -446,7 +452,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     const targets: { id: string; name: string }[] = [{ id: pid, name: oldName }]
     if (b.includeChildren !== false) {
       targets.push(
-        ...(db.prepare("SELECT id, name FROM pages WHERE wiki_id = ? AND name LIKE ? ESCAPE '\\'").all(wikiId, `${oldName.replace(/[\\%_]/g, (m) => '\\' + m)}/%`) as {
+        ...(db.prepare(`SELECT id, name FROM pages WHERE wiki_id = ? AND ${UNDER}`).all(wikiId, `${oldName}/`, `${oldName}/`) as {
           id: string
           name: string
         }[]),
