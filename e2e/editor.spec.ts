@@ -360,22 +360,30 @@ test.describe('outline', () => {
   })
 })
 
-test.describe('line numbers', () => {
-  test('gutter shows source line numbers aligned with their text', async ({ page }) => {
+test.describe('block gutter', () => {
+  test('one bar per edit block, aligned with the block', async ({ page }) => {
     const lines = await page.locator('.ln').evaluateAll((ls) => ls.map((l) => (l as HTMLElement).dataset.lines))
-    // blank lines and the table delimiter row have no number; each source line has its own row
-    expect(lines.slice(0, 11)).toEqual(['1', '3', '4', '6', '7', '9', '10', '11', '12', '14', '16'])
+    // paragraph lines are separate blocks; quote, list, table and code are one block each
+    expect(lines).toEqual(['1', '3', '4', '6-7', '9-12', '14', '16-19', '21', '23', '26', '29', '31'])
+    await expect(page.locator('.ln').first()).not.toHaveText(/\d/)
+    const code = (await page.locator('.ln[data-n="26"]').boundingBox())!
+    const pre = (await page.locator('[data-testid=doc] pre').boundingBox())!
+    expect(Math.abs(code.y - pre.y)).toBeLessThan(2)
+    expect(Math.abs(code.height - pre.height)).toBeLessThan(2)
     const ln = (await page.locator('.ln[data-n="14"]').boundingBox())!
     const h = (await page.locator('[data-testid=doc] h2', { hasText: '表' }).boundingBox())!
     expect(Math.abs(ln.y + ln.height / 2 - (h.y + h.height / 2))).toBeLessThan(8)
   })
 
-  test('click / shift-click select lines and give a permalink', async ({ page }) => {
+  test('click selects a block (shift-click extends) and gives a permalink', async ({ page }) => {
     await page.locator('.ln[data-n="9"]').click()
-    await page.locator('.ln[data-n="12"]').click({ modifiers: ['Shift'] })
     expect((await focusInfo(page)).selected).toBe('項目 A\n子項目 A-1\nタスク\n項目 B')
     expect(page.url()).toMatch(/\/playground#L9-L12$/)
-    await expect(page.locator('.ln.on')).toHaveCount(4)
+    await expect(page.locator('.ln.on')).toHaveCount(1)
+    await page.locator('.ln[data-n="6"]').click({ modifiers: ['Shift'] })
+    expect(page.url()).toMatch(/\/playground#L6-L12$/)
+    await expect(page.locator('.ln.on')).toHaveCount(2)
+    await page.locator('.ln[data-n="9"]').click()
     await page.getByTestId('copy-permalink').click()
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(/\/playground#L9-L12$/)
     // the selection behaves like any other: Markdown copy keeps the list structure
@@ -421,7 +429,7 @@ test.describe('soft line breaks', () => {
 test.describe('multi-line editing', () => {
   test('selected lines (via line numbers) open together as one source editor', async ({ page }) => {
     await page.locator('.ln[data-n="4"]').click()
-    await page.locator('.ln[data-n="7"]').click({ modifiers: ['Shift'] })
+    await page.locator('.ln[data-n="6"]').click({ modifiers: ['Shift'] })
     await page.keyboard.press('Enter')
     const ta = page.locator('[data-testid=src-editor] textarea')
     await expect(ta).toHaveValue('同じ段落の二行目には *強調* と `inline code` と ~~取り消し~~ があります。\n\n> 引用の一行目\n> 引用の二行目で **太字** も使えます。')
@@ -528,7 +536,6 @@ test.describe('Enter continuation in edit mode', () => {
 test.describe('context menu edit', () => {
   test('right-click on a selection offers 選択範囲を編集', async ({ page }) => {
     await page.locator('.ln[data-n="9"]').click()
-    await page.locator('.ln[data-n="12"]').click({ modifiers: ['Shift'] })
     const box = (await page.locator('[data-testid=doc] li').first().boundingBox())!
     await page.mouse.click(box.x + 30, box.y + 8, { button: 'right' })
     await page.locator('.doc-menu-context').getByTestId('edit-selection').click()
