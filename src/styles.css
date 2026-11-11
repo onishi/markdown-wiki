@@ -288,10 +288,11 @@ label.check { display: flex; gap: 8px; align-items: center; margin: 10px 0; font
 
 /* ------------------------------------------------------------------ line numbers */
 .gutter { position: absolute; left: -52px; top: 0; width: 40px; height: 100%; user-select: none; }
-.ln { position: absolute; left: 0; width: 40px; display: flex; align-items: center; justify-content: flex-end; cursor: pointer; }
-.ln::before { content: attr(data-n); font-family: var(--mono); font-size: 10.5px; color: var(--fg-muted); opacity: .55; padding-right: 4px; }
-.ln:hover::before { opacity: 1; color: var(--accent); }
-.ln.on::before { opacity: 1; color: var(--accent); font-weight: 600; }
+.ln { position: absolute; left: 0; width: 40px; cursor: pointer; }
+/* One thin bar per edit block, slightly inset so neighbouring blocks read as separate. */
+.ln::before { content: ''; position: absolute; right: 6px; top: 2px; bottom: 2px; width: 3px; border-radius: 2px; background: var(--fg-muted); opacity: .22; transition: background .1s, width .1s; }
+.ln:hover::before { background: var(--accent); opacity: .55; width: 4px; }
+.ln.on::before { background: var(--accent); opacity: 1; width: 4px; }
 .doc-menu-sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 2px; }
 .doc-menu-context .doc-menu-sep { width: auto; height: 1px; }
 

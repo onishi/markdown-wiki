@@ -294,10 +294,11 @@ export function DocEditor(props: DocEditorProps) {
   // ------------------------------------------------------------ line numbers
 
   /**
-   * Gutter of *source* line numbers.  Each source line that has rendered text gets
-   * its number at the height of its first rendered character (found through the
-   * per-character source map).  Lines starting on the same visual row (soft line
-   * breaks render as spaces) share one entry.
+   * Gutter of edit blocks.  Each edit unit (a paragraph line, a whole list / table /
+   * code block / quote …) gets a thin bar from the top of its first rendered
+   * character to the bottom of its last one; clicking it selects the block.
+   * Source line numbers are kept per entry (a..b) for permalinks (#L12-L15) but not shown,
+   * so blank lines between blocks don't make the gutter look gappy.
    */
   const [gutter, setGutter] = useState<GutterEntry[]>([])
   const [lineSel, setLineSel] = useState<{ a: number; b: number; y: number } | null>(null)
@@ -334,19 +335,47 @@ export function DocEditor(props: DocEditorProps) {
     anchors.current = { first, last }
     const rootTop = root.getBoundingClientRect().top
     const r = document.createRange()
-    const out: GutterEntry[] = []
-    for (const L of [...first.keys()].sort((x, y) => x - y)) {
-      const [t, i] = first.get(L)!
+    const rectOf = ([t, i]: [Text, number]) => {
       r.setStart(t, i)
       r.setEnd(t, Math.min(i + 1, t.length))
-      const rect = r.getClientRects()[0] ?? r.getBoundingClientRect()
-      const y = rect.top - rootTop
-      const prev = out[out.length - 1]
-      if (prev && Math.abs(prev.y - y) < 4) prev.b = L + 1
-      else out.push({ a: L + 1, b: L + 1, y, h: rect.height || 20 })
+      return r.getClientRects()[0] ?? r.getBoundingClientRect()
     }
-    setGutter(out)
-  }, [source, runs])
+    const out: (GutterEntry & { unitEnd: number })[] = []
+    for (const L of [...first.keys()].sort((x, y) => x - y)) {
+      const prev = out[out.length - 1]
+      const bottom = rectOf(last.get(L)!).bottom - rootTop
+      // Inside the previous block (nested list items, table rows, …): extend it.
+      if (prev && L <= prev.unitEnd) {
+        prev.b = L + 1
+        prev.h = Math.max(prev.h, bottom - prev.y)
+        continue
+      }
+      const u = computeEditUnit(liveTree, source, starts[L], listMode)
+      const unitEnd = Math.max(L, lineOf(Math.max(u.start, u.end - 1)))
+      let y = rectOf(first.get(L)!).top - rootTop
+      let bot = bottom
+      // Whole blocks (code, table, quote, list …): span the block's box, not just its text.
+      if (u.kind === 'block' || u.kind === 'item') {
+        let el: Element | null = first.get(L)![0].parentElement
+        if (u.kind === 'item') el = el?.closest('li') ?? null
+        else while (el && el.parentElement !== root) el = el.parentElement
+        if (el && el !== root) {
+          const box = el.getBoundingClientRect()
+          y = Math.min(y, box.top - rootTop)
+          bot = Math.max(bot, box.bottom - rootTop)
+        }
+      }
+      // Lines sharing a visual row (soft breaks shown as spaces) become one entry.
+      if (prev && y < prev.y + prev.h - 4) {
+        prev.b = L + 1
+        prev.unitEnd = Math.max(prev.unitEnd, unitEnd)
+        prev.h = Math.max(prev.h, bottom - prev.y)
+        continue
+      }
+      out.push({ a: L + 1, b: L + 1, y, h: Math.max(bot - y, 4), unitEnd })
+    }
+    setGutter(out.map(({ unitEnd: _u, ...e }) => e))
+  }, [source, runs, liveTree, listMode])
 
   useLayoutEffect(() => {
     computeGutter()
@@ -880,7 +909,7 @@ export function DocEditor(props: DocEditorProps) {
                 className={`ln ${lineSel && g.b >= lineSel.a && g.a <= lineSel.b ? 'on' : ''}`}
                 data-n={g.a}
                 data-lines={g.b > g.a ? `${g.a}-${g.b}` : String(g.a)}
-                title={g.b > g.a ? `${g.a}–${g.b} 行目` : `${g.a} 行目`}
+                title={`クリックでこのブロックを選択（${g.b > g.a ? `${g.a}–${g.b}` : g.a} 行目）`}
                 style={{ top: g.y, height: g.h }}
                 onMouseDown={(e) => onGutterMouseDown(e, g)}
               />
