@@ -184,6 +184,26 @@ describe('pages: save conflicts, rename, hierarchy', () => {
     expect((await a.get(`/api/wikis/${w.id}`)).json.wiki.topPageId).toBeNull()
   })
 
+  it('page names distinguish case and full/half width (also for children and rename)', async () => {
+    const a = await login(app, 'a@example.com')
+    const w = (await a.post('/api/wikis', { name: 'W' })).json.wiki
+    const mk = async (name: string) => (await a.post(`/api/wikis/${w.id}/pages`, { name, content: name })).json.page
+    const upper = await mk('LISA')
+    for (const n of ['LiSA', 'ＬｉＳＡ', 'LISA/曲', 'lisa/曲', 'ＬＩＳＡ/曲']) expect((await mk(n)).name).toBe(n)
+    for (const n of ['LISA', 'LiSA', 'ＬｉＳＡ']) {
+      const r = await a.get(`/api/wikis/${w.id}/resolve?name=${encodeURIComponent(n)}`)
+      expect(r.json.page.content).toBe(n)
+    }
+    // Children of a page that doesn't exist: only exact-prefix matches.
+    const r = await a.get(`/api/wikis/${w.id}/resolve?name=lisa`)
+    expect(r.status).toBe(404)
+    expect(r.json.children.map((c: any) => c.name)).toEqual(['lisa/曲'])
+    // Renaming LISA with its children leaves lisa/… and ＬＩＳＡ/… alone.
+    await a.post(`/api/wikis/${w.id}/pages/${upper.id}/rename`, { name: 'LISA2', includeChildren: true })
+    const names = (await a.get(`/api/wikis/${w.id}/pages`)).json.pages.map((p: any) => p.name).sort()
+    expect(names).toEqual(['LISA2', 'LISA2/曲', 'LiSA', 'lisa/曲', 'ＬＩＳＡ/曲', 'ＬｉＳＡ'].sort())
+  })
+
   it('creates child pages without a parent page and resolves names', async () => {
     const a = await login(app, 'a@example.com')
     const w = (await a.post('/api/wikis', { name: 'W' })).json.wiki
