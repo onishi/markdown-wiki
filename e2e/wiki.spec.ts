@@ -232,6 +232,12 @@ test('top page: wiki URL without a page redirects there; page list stays reachab
   await page.goto(`/w/${wid}`)
   await expect(page).toHaveURL(new RegExp(`/w/${wid}/p/${encodeURIComponent('はじめに')}$`))
   await expect(page.locator('.page-title')).toHaveText('はじめに')
+  // Breadcrumb: the top page itself has no root crumb; other pages start from it.
+  await expect(page.getByTestId('breadcrumb')).toHaveText('はじめに')
+  await page.goto(`/w/${wid}/p/${encodeURIComponent('メモ')}`)
+  await expect(page.getByTestId('breadcrumb')).toHaveText('はじめに/メモ')
+  await page.getByTestId('breadcrumb').getByRole('link', { name: 'はじめに' }).click()
+  await expect(page.locator('.page-title')).toHaveText('はじめに')
 
   // An empty page name (/w/<slug>/p/) also goes to the top page.
   await page.goto(`/w/${wid}/p/`)
@@ -246,6 +252,9 @@ test('top page: wiki URL without a page redirects there; page list stays reachab
   await expect(page.getByText('トップページを変更しました。')).toBeVisible()
   await page.goto(`/w/${wid}`)
   await expect(page.getByRole('heading', { name: /すべてのページ/ })).toBeVisible()
+  // Without a top page the root crumb is the wiki name.
+  await page.goto(`/w/${wid}/p/${encodeURIComponent('メモ')}`)
+  await expect(page.getByTestId('breadcrumb')).toHaveText('トップ wiki/メモ')
 })
 
 test('wiki slug: /w/<slug>/p/<page> URLs; changing it keeps old URLs working', async ({ browser }) => {
