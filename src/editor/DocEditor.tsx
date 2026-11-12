@@ -26,6 +26,8 @@ export interface DocEditorProps {
   onReadOnlyAttempt?: () => void
   /** Imperative API (outline jumps). */
   handleRef?: React.MutableRefObject<DocEditorHandle | null>
+  /** Page names offered by `[[` completion in the source editor. */
+  wikiNames?: string[]
   /** Store a pasted / dropped image and return its URL (no handler: images are not accepted). */
   onUploadImage?: (file: File) => Promise<{ url: string }>
 }
@@ -46,7 +48,7 @@ interface EditState {
 }
 
 interface Menu {
-  kind: 'selection' | 'context' | 'link'
+  kind: 'selection' | 'context' | 'link' | 'tap'
   x: number
   y: number
   link?: { href: string; wiki?: string; missing?: boolean }
@@ -76,9 +78,14 @@ export function DocEditor(props: DocEditorProps) {
   const [focused, setFocused] = useState(false)
   const [menu, setMenu] = useState<Menu | null>(null)
   const mouseDown = useRef(false)
-  const pending = useRef<{ caret?: number; anchorY?: number; focusDoc?: boolean; top?: boolean } | null>(null)
+  const pending = useRef<{ caret?: number; anchorY?: number; focusDoc?: boolean; top?: boolean; reveal?: boolean } | null>(null)
   const [, forceRender] = useState(0)
   const [toast, setToast] = useState<string | null>(null)
+  useEffect(() => {
+    if (!toast) return
+    const t = setTimeout(() => setToast(null), 1800)
+    return () => clearTimeout(t)
+  }, [toast])
   const propsRef = useRef(props)
   propsRef.current = props
   // Sources this editor produced itself; anything else arriving while editing is an
@@ -91,11 +98,28 @@ export function DocEditor(props: DocEditorProps) {
     },
     [onChange],
   )
+  // Display-mode undo/redo: whole-document snapshots per edit session (the textarea's
+  // own undo stack is gone once the session ends).
+  const undoStack = useRef<string[]>([])
+  const redoStack = useRef<string[]>([])
   if (edit && source !== emitted.current) {
     emitted.current = source
     editRef.current = null
     setEdit(null)
-  } else if (!edit) emitted.current = source
+    undoStack.current = []
+    redoStack.current = []
+  } else if (!edit && source !== emitted.current) {
+    // Someone else's text (remote update, conflict resolution, restore): undoing past it
+    // would silently drop their change, so history starts over.
+    emitted.current = source
+    undoStack.current = []
+    redoStack.current = []
+  }
+  const record = (before: string) => {
+    undoStack.current.push(before)
+    if (undoStack.current.length > 100) undoStack.current.shift()
+    redoStack.current = []
+  }
 
   const liveTree = useMemo(() => parseMarkdown(source), [source])
   const tree = edit ? edit.frozenTree : liveTree
@@ -162,7 +186,7 @@ export function DocEditor(props: DocEditorProps) {
       setMenu((m) => (m?.kind === 'context' ? m : { kind: 'selection', x: last.right - b.left, y: last.bottom - b.top + 6 }))
       return
     }
-    setMenu((m) => (m?.kind === 'context' ? m : null))
+    setMenu((m) => (m?.kind === 'context' || m?.kind === 'tap' ? m : null))
   }, [selectionInDoc])
 
   useEffect(() => {
@@ -241,6 +265,7 @@ export function DocEditor(props: DocEditorProps) {
       const c = caretAt ?? e.unit.start + (ta ? ta.selectionEnd : 0)
       pending.current = { caret: c, anchorY: caretAt === undefined && ta ? textareaCaretY(ta) : undefined, focusDoc: true }
       setEdit(null)
+      if (composed !== e.frozenSrc) record(e.frozenSrc)
       if (composed !== source) emit(composed)
     },
     [emit, source],
@@ -274,6 +299,7 @@ export function DocEditor(props: DocEditorProps) {
           const top = (block ?? pt.node.parentElement)?.getBoundingClientRect().top ?? r?.top
           if (top !== undefined) window.scrollBy({ top: top - 72, behavior: 'instant' as ScrollBehavior })
         } else if (r && p.anchorY !== undefined) window.scrollBy(0, r.top - p.anchorY)
+        else if (r && p.reveal && (r.top < 64 || r.bottom > window.innerHeight - 64)) window.scrollBy({ top: r.top - window.innerHeight / 3, behavior: 'instant' as ScrollBehavior })
       }
     }
     paint()
@@ -592,6 +618,13 @@ export function DocEditor(props: DocEditorProps) {
       if (sel && !sel.isCollapsed) sel.collapseToEnd()
       return
     }
+    // Undo / redo of whole edit sessions: Cmd/Ctrl+Z, Shift+Cmd/Ctrl+Z (Ctrl+Y), and vim's u.
+    const z = e.key.toLowerCase() === 'z'
+    if ((cmd && !e.altKey && z) || (!isMac && e.ctrlKey && e.key.toLowerCase() === 'y') || (!mod && !e.altKey && e.key === 'u')) {
+      e.preventDefault()
+      undoRedo((z && e.shiftKey) || (!isMac && e.ctrlKey && e.key.toLowerCase() === 'y'))
+      return
+    }
     if (cmd && !e.altKey && e.key.toLowerCase() === 'a') {
       e.preventDefault()
       const spans = rootRef.current!.querySelectorAll('span.r')
@@ -670,6 +703,24 @@ export function DocEditor(props: DocEditorProps) {
     if (!m) return
     e.preventDefault()
     applyMove(m, e.shiftKey)
+  }
+
+  const undoRedo = (redo: boolean) => {
+    if (readOnly) return
+    const from = redo ? redoStack.current : undoStack.current
+    const to = redo ? undoStack.current : redoStack.current
+    const next = from.pop()
+    if (next === undefined) {
+      setToast(redo ? 'やり直す変更はありません' : '取り消す変更はありません')
+      return
+    }
+    to.push(source)
+    // Caret at the first changed character, scrolled into view if needed.
+    let i = 0
+    while (i < next.length && i < source.length && next[i] === source[i]) i++
+    pending.current = { caret: i, focusDoc: true, reveal: true }
+    emit(next)
+    setToast(redo ? 'やり直しました' : '取り消しました')
   }
 
   const openNewLine = (dir: 'below' | 'above') => {
@@ -762,6 +813,7 @@ export function DocEditor(props: DocEditorProps) {
     return off == null ? null : m.sourceToDom(off)
   }
 
+  const lastPointer = useRef('mouse')
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as Element
     if (target.closest('.src-editor') || target.closest('.doc-menu')) return
@@ -771,6 +823,17 @@ export function DocEditor(props: DocEditorProps) {
       return
     }
     const a = target.closest('a')
+    if (!a && lastPointer.current === 'touch' && !edit && !readOnly) {
+      // Touch: no double-click / keyboard, so a tap offers an 編集 button at the caret.
+      if (!rootRef.current?.querySelector('span.r')) return startEdit(0) // empty page: just start
+      const sel = selectionInDoc()
+      if (sel?.isCollapsed) {
+        const r = caretRect(sel.focusNode!, sel.focusOffset)
+        const b = rootRef.current!.getBoundingClientRect()
+        if (r) setMenu({ kind: 'tap', x: r.left - b.left, y: r.bottom - b.top + 6 })
+      }
+      return
+    }
     if (a && rootRef.current?.contains(a)) {
       e.preventDefault()
       // A drag or Shift+click that made a selection is a selection, not a link click.
@@ -787,7 +850,10 @@ export function DocEditor(props: DocEditorProps) {
     if (!(at >= 0) || source[at] !== '[') return
     const cur = source.slice(at, at + 3)
     const next = /^\[[xX]\]$/.test(cur) ? '[ ]' : /^\[ \]$/.test(cur) ? '[x]' : null
-    if (next) emit(source.slice(0, at) + next + source.slice(at + 3))
+    if (next) {
+      record(source)
+      emit(source.slice(0, at) + next + source.slice(at + 3))
+    }
   }
 
   const openLink = (l: Menu['link'], newTab = false) => {
@@ -987,9 +1053,10 @@ export function DocEditor(props: DocEditorProps) {
             },
             exit: () => exitEdit(),
             onImages: props.onUploadImage ? insertImages : undefined,
+            wikiNames: props.wikiNames,
           }
         : null,
-    [edit, emit, exitEdit, insertImages, props.onUploadImage],
+    [edit, emit, exitEdit, insertImages, props.onUploadImage, props.wikiNames],
   )
 
   const hasSelection = menu?.kind === 'context' ? !!selectionRange() : true
@@ -1004,6 +1071,7 @@ export function DocEditor(props: DocEditorProps) {
         aria-label="本文"
         data-testid="doc"
         onKeyDown={onKeyDown}
+        onPointerDown={(e) => (lastPointer.current = e.pointerType)}
         onMouseDown={onMouseDown}
         onClick={onClick}
         onCopy={onCopy}
@@ -1050,7 +1118,27 @@ export function DocEditor(props: DocEditorProps) {
                 <span className="doc-menu-hint">リンクはクリックで開きます</span>
               </>
             )}
-            {lineSel && menu.kind !== 'link' && (
+            {menu.kind === 'tap' && (
+              <button
+                role="menuitem"
+                data-testid="tap-edit"
+                onClick={() => {
+                  const off = focusOffset() ?? (rootRef.current?.querySelector('span.r') ? null : 0)
+                  if (off != null) startEdit(off)
+                }}
+              >
+                編集
+              </button>
+            )}
+            {menu.kind === 'selection' && lastPointer.current === 'touch' && !readOnly && (
+              <>
+                <button onClick={editSelection} role="menuitem">
+                  選択範囲を編集
+                </button>
+                <span className="doc-menu-sep" />
+              </>
+            )}
+            {lineSel && menu.kind !== 'link' && menu.kind !== 'tap' && (
               <>
                 <span className="doc-menu-label">{lineSel.b > lineSel.a ? `L${lineSel.a}–L${lineSel.b}` : `L${lineSel.a}`}</span>
                 <button onClick={copyPermalink} role="menuitem" data-testid="copy-permalink">

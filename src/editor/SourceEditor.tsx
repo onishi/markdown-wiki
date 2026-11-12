@@ -1,5 +1,6 @@
-import { createContext, useContext, useLayoutEffect, useRef } from 'react'
+import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { continueOnEnter } from '../../shared/markdown/continueLine'
+import { rankNames } from '../../shared/fuzzy'
 
 export interface EditCtxValue {
   text: string
@@ -10,6 +11,14 @@ export interface EditCtxValue {
   taRef: React.MutableRefObject<HTMLTextAreaElement | null>
   /** Pasted / dropped image files (insert at the caret, upload). */
   onImages?: (files: File[]) => void
+  /** Page names offered after `[[` (most relevant first, e.g. recently updated). */
+  wikiNames?: string[]
+}
+
+/** An unclosed `[[query` right before the caret (same line, no `]`/`|`). */
+export function wikiQueryAt(text: string, caret: number): { start: number; query: string } | null {
+  const m = /\[\[([^\[\]\n|]{0,100})$/.exec(text.slice(Math.max(0, caret - 110), caret))
+  return m ? { start: caret - m[1].length, query: m[1] } : null
 }
 
 export const EditCtx = createContext<EditCtxValue | null>(null)
@@ -30,6 +39,33 @@ export function SourceEditor() {
   const ctx = useContext(EditCtx)!
   const compEnd = useRef(-1e9)
 
+  // `[[` completion
+  const [comp, setComp] = useState<{ start: number; query: string; x: number; y: number } | null>(null)
+  const [compSel, setCompSel] = useState(0)
+  const items = useMemo(() => (comp && ctx.wikiNames ? rankNames(ctx.wikiNames, comp.query, 8) : []), [comp, ctx.wikiNames])
+  // Esc dismisses the suggestions for this `[[` until the text changes.
+  const dismissed = useRef<number | null>(null)
+  const updateComp = (ta: HTMLTextAreaElement, typed = false) => {
+    if (typed) dismissed.current = null
+    if (!ctx.wikiNames || ta.selectionStart !== ta.selectionEnd) return setComp(null)
+    const q = wikiQueryAt(ta.value, ta.selectionStart)
+    if (!q || dismissed.current === q.start) return setComp(null)
+    const p = textareaCaretPos(ta)
+    setComp((c) => {
+      if (!c || c.query !== q.query) setCompSel(0)
+      return { ...q, x: p.left, y: p.bottom }
+    })
+  }
+  const accept = (name: string) => {
+    const ta = ctx.taRef.current!
+    const pos = ta.selectionStart
+    // Replace the query (and a closing `]]` already typed after it) with `name]]`.
+    const end = ta.value.startsWith(']]', pos) ? pos + 2 : pos
+    ta.setSelectionRange(comp!.start, end)
+    document.execCommand('insertText', false, `${name}]]`)
+    setComp(null)
+  }
+
   useLayoutEffect(() => {
     const ta = ctx.taRef.current!
     autosize(ta)
@@ -44,6 +80,30 @@ export function SourceEditor() {
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (isImeKey(e, compEnd.current)) return
+    if (comp && items.length) {
+      const down = e.key === 'ArrowDown' || (e.ctrlKey && e.key === 'n')
+      const up = e.key === 'ArrowUp' || (e.ctrlKey && e.key === 'p')
+      if (down || up) {
+        e.preventDefault()
+        e.stopPropagation()
+        setCompSel((i) => (i + (down ? 1 : -1) + items.length) % items.length)
+        return
+      }
+      if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        e.stopPropagation()
+        accept(items[compSel] ?? items[0])
+        return
+      }
+      if (e.key === 'Escape') {
+        // First Esc closes the suggestions; the next one leaves edit mode.
+        e.preventDefault()
+        e.stopPropagation()
+        dismissed.current = comp.start
+        setComp(null)
+        return
+      }
+    }
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
@@ -99,7 +159,10 @@ export function SourceEditor() {
         onChange={(e) => {
           ctx.setText(e.target.value)
           autosize(e.target)
+          updateComp(e.target, true)
         }}
+        onSelect={(e) => updateComp(e.currentTarget)}
+        onBlur={() => setComp(null)}
         onKeyDown={onKeyDown}
         onPaste={(e) => {
           const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'))
@@ -112,8 +175,22 @@ export function SourceEditor() {
           compEnd.current = performance.now()
         }}
       />
-      <div className="src-hint" aria-hidden>
-        Markdown · <kbd>Esc</kbd> で表示に戻る
+      {comp && items.length > 0 && (
+        <ul className="wiki-complete" role="listbox" data-testid="wiki-complete" style={{ left: comp.x, top: comp.y + 4 }}>
+          {items.map((n, i) => (
+            <li key={n} role="option" aria-selected={i === compSel}>
+              <button className={i === compSel ? 'on' : ''} onMouseDown={(e) => (e.preventDefault(), accept(n))} onMouseEnter={() => setCompSel(i)}>
+                {n}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="src-hint">
+        Markdown{ctx.wikiNames ? ' · [[ でページ名を補完' : ''} ·{' '}
+        <button className="src-done" onMouseDown={(e) => e.preventDefault()} onClick={() => ctx.exit()} data-testid="src-done">
+          完了 <kbd>Esc</kbd>
+        </button>
       </div>
     </div>
   )
@@ -122,6 +199,33 @@ export function SourceEditor() {
 function autosize(ta: HTMLTextAreaElement) {
   ta.style.height = '0px'
   ta.style.height = `${ta.scrollHeight}px`
+}
+
+/** Viewport position of the caret inside a textarea (mirror element). */
+export function textareaCaretPos(ta: HTMLTextAreaElement): { left: number; top: number; bottom: number } {
+  const cs = getComputedStyle(ta)
+  const m = document.createElement('div')
+  for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'paddingTop', 'paddingLeft', 'paddingRight', 'borderTopWidth', 'borderLeftWidth', 'borderRightWidth', 'boxSizing', 'tabSize'] as const) {
+    ;(m.style as any)[p] = (cs as any)[p]
+  }
+  m.style.position = 'absolute'
+  m.style.visibility = 'hidden'
+  m.style.whiteSpace = 'pre-wrap'
+  m.style.overflowWrap = 'break-word'
+  m.style.width = `${ta.offsetWidth}px`
+  m.style.left = '0'
+  m.style.top = '0'
+  m.textContent = ta.value.slice(0, ta.selectionEnd)
+  const mark = document.createElement('span')
+  mark.textContent = '\u200b'
+  m.appendChild(mark)
+  document.body.appendChild(m)
+  const r = ta.getBoundingClientRect()
+  const left = r.left + mark.offsetLeft - ta.scrollLeft
+  const top = r.top + mark.offsetTop - ta.scrollTop
+  const h = mark.offsetHeight || parseFloat(cs.lineHeight) || 20
+  m.remove()
+  return { left, top, bottom: top + h }
 }
 
 /** Viewport y of the caret inside a textarea, measured with a mirror element. */

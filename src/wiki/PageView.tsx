@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HistoryDialog } from './HistoryDialog'
+import { HelpDialog } from './HelpDialog'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError, pageUrl, type Page, uploadImage } from '../api'
 import { normalizePageName } from '../../shared/pageName'
@@ -166,6 +167,20 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
   )
   const [dialog, setDialog] = useState<'rename' | 'delete' | 'history' | null>(null)
   const [roNotice, setRoNotice] = useState(false)
+  const [help, setHelp] = useState(false)
+
+  // `?` (outside text fields, not while editing) shows the shortcut list.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      const t = e.target as Element
+      if (e.key !== '?' || e.metaKey || e.ctrlKey || e.altKey || e.isComposing || editing) return
+      if (t.closest('input, textarea, select, [contenteditable=true]')) return
+      e.preventDefault()
+      setHelp(true)
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [editing])
 
   useEffect(() => {
     if (saver.conflict) setShowConflict(true)
@@ -191,6 +206,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
   }, [saver.content, setOutline])
   useEffect(() => () => setOutline(null), [setOutline])
 
+  const wikiNames = useMemo(() => [...pages].sort((a, b) => b.updatedAt - a.updatedAt).map((p) => p.name), [pages])
   const childPages = useMemo(() => pages.filter((p) => p.name.startsWith(page.name + '/')), [pages, page.name])
   const openWiki = useCallback((t: string) => nav(pageUrl(wiki.slug, t)), [nav, wiki.slug])
 
@@ -203,19 +219,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           <button className="btn btn-small" onClick={() => setDialog('history')} data-testid="history">
             履歴
           </button>
-          {canEdit && (
-            <>
-              <button className="btn btn-small" onClick={() => openNewPage(page.name + '/')} title="このページの下に子ページを作成">
-                子ページ
-              </button>
-              <button className="btn btn-small" onClick={() => setDialog('rename')} data-testid="rename">
-                名前を変更
-              </button>
-              <button className="btn btn-small btn-danger-ghost" onClick={() => setDialog('delete')} data-testid="delete">
-                削除
-              </button>
-            </>
-          )}
+          {canEdit && <PageMenu onChild={() => openNewPage(page.name + '/')} onRename={() => setDialog('rename')} onDelete={() => setDialog('delete')} />}
         </div>
       </div>
       <h1 className="page-title">{page.name.split('/').pop()}</h1>
@@ -235,6 +239,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
         onOpenWiki={openWiki}
         onEditingChange={setEditing}
         handleRef={editorHandle}
+        wikiNames={wikiNames}
         onUploadImage={canEdit ? (f) => uploadImage(wiki.id, f, f.name || 'image.png') : undefined}
         onReadOnlyAttempt={() => {
           setRoNotice(true)
@@ -253,7 +258,8 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           </ul>
         </section>
       )}
-      <ModeBar editing={editing} canEdit={canEdit} roNotice={roNotice} />
+      <ModeBar editing={editing} canEdit={canEdit} roNotice={roNotice} onHelp={() => setHelp(true)} />
+      {help && <HelpDialog onClose={() => setHelp(false)} />}
       {dialog === 'history' && (
         <HistoryDialog
           wikiId={wiki.id}
@@ -347,20 +353,71 @@ function SaveIndicator({ saver, onConflict }: { saver: ReturnType<typeof usePage
   )
 }
 
-function ModeBar({ editing, canEdit, roNotice }: { editing: boolean; canEdit: boolean; roNotice: boolean }) {
-  const alt = /Mac/.test(navigator.platform) ? '⌥' : 'Alt'
+function ModeBar({ editing, canEdit, roNotice, onHelp }: { editing: boolean; canEdit: boolean; roNotice: boolean; onHelp: () => void }) {
+  const mod = /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'
+  const help = (
+    <button className="mode-help" onClick={onHelp} data-testid="help-button" title="操作一覧（?）">
+      ? 操作一覧
+    </button>
+  )
   return (
     <div className={`mode-bar ${editing ? 'mode-edit' : 'mode-view'}`} data-testid="mode-bar">
       {editing ? (
         <>
-          <span className="mode-dot" /> 編集中 — <kbd>Esc</kbd> で表示に戻る（変更は自動保存）
+          <span className="mode-dot" /> 編集中 — <kbd>Esc</kbd> か「完了」で表示に戻る（自動保存） · <kbd>[[</kbd> でページ名を補完
         </>
       ) : canEdit ? (
         <>
-          表示中 — <kbd>Enter</kbd> <kbd>i</kbd> <kbd>a</kbd> / ダブルクリックで編集 · 矢印 / <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> で移動 · <kbd>o</kbd> <kbd>O</kbd> で新しい行 · リンクはクリックで開く（<kbd>{alt}</kbd>+クリックでカーソル） · 右クリックでコピー
+          表示中 — <kbd>Enter</kbd> / ダブルクリックで編集 · <kbd>{mod}+Z</kbd> で取り消し {help}
         </>
       ) : (
-        <>{roNotice ? <strong>閲覧者のため編集できません</strong> : '閲覧のみ'} — 選択して右クリックでコピー形式を選択</>
+        <>
+          {roNotice ? <strong>閲覧者のため編集できません</strong> : '閲覧のみ'} — 選択して右クリックでコピー {help}
+        </>
+      )}
+    </div>
+  )
+}
+
+function PageMenu({ onChild, onRename, onDelete }: { onChild: () => void; onRename: () => void; onDelete: () => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: Event) => {
+      if (e instanceof KeyboardEvent ? e.key === 'Escape' : !ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', close)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', close)
+    }
+  }, [open])
+  const item = (label: string, fn: () => void, extra?: { danger?: boolean; testid?: string }) => (
+    <button
+      role="menuitem"
+      className={extra?.danger ? 'danger' : ''}
+      data-testid={extra?.testid}
+      onClick={() => {
+        setOpen(false)
+        fn()
+      }}
+    >
+      {label}
+    </button>
+  )
+  return (
+    <div className="menu-wrap" ref={ref}>
+      <button className="btn btn-small" aria-haspopup="menu" aria-expanded={open} aria-label="ページの操作" title="ページの操作" onClick={() => setOpen((o) => !o)} data-testid="page-menu">
+        …
+      </button>
+      {open && (
+        <div className="menu-pop" role="menu">
+          {item('子ページを作成', onChild)}
+          {item('名前を変更', onRename, { testid: 'rename' })}
+          {item('削除', onDelete, { danger: true, testid: 'delete' })}
+        </div>
       )}
     </div>
   )

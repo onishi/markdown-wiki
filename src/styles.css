@@ -353,3 +353,54 @@ label.check { display: flex; gap: 8px; align-items: center; margin: 10px 0; font
 .quick-list button.on { background: var(--accent-soft); }
 .quick-empty { padding: 6px 10px; }
 .quick-btn { display: flex; justify-content: space-between; align-items: center; width: 100%; margin-top: 6px; }
+
+/* ------------------------------------------------------------------ [[ completion */
+.wiki-complete { position: fixed; z-index: 30; list-style: none; margin: 0; padding: 4px; min-width: 200px; max-width: 420px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.12); font-family: var(--sans, inherit); }
+.wiki-complete button { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--fg); padding: 5px 8px; border-radius: 5px; font: inherit; font-size: 13.5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wiki-complete button.on { background: var(--accent-soft); }
+.src-done { border: 1px solid var(--border); background: var(--bg); color: var(--fg); border-radius: 5px; padding: 1px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.src-done:hover { border-color: var(--accent); color: var(--accent); }
+.src-done kbd { font-size: 10.5px; margin-left: 2px; }
+.src-hint .src-done { pointer-events: auto; }
+
+/* ------------------------------------------------------------------ help */
+.help { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px 24px; max-height: 70vh; overflow: auto; }
+.help h3 { margin: 4px 0 6px; font-size: 14px; }
+.help dl { margin: 0; }
+.help-row { display: grid; grid-template-columns: minmax(96px, auto) 1fr; gap: 10px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13px; align-items: baseline; }
+.help-row dt { display: flex; flex-wrap: wrap; gap: 3px; }
+.help-row dd { margin: 0; color: var(--fg-muted); }
+
+/* ------------------------------------------------------------------ page menu */
+.menu-wrap { position: relative; }
+.menu-pop { position: absolute; right: 0; top: calc(100% + 4px); z-index: 25; min-width: 180px; padding: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+.menu-pop button { display: block; width: 100%; text-align: left; border: 0; background: none; color: var(--fg); padding: 6px 10px; border-radius: 5px; font: inherit; font-size: 13.5px; cursor: pointer; }
+.menu-pop button:hover { background: var(--accent-soft); }
+.menu-pop button.danger { color: var(--danger); }
+.mode-help { border: 1px solid var(--border); background: var(--bg); color: var(--fg-muted); border-radius: 10px; padding: 0 8px; font: inherit; font-size: 12px; cursor: pointer; margin-left: 6px; }
+.mode-help:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ------------------------------------------------------------------ phones */
+.mobile-bar { display: none; }
+.drawer-back { display: none; }
+.icon-btn { border: 0; background: none; color: var(--fg); font-size: 20px; line-height: 1; width: 40px; height: 40px; border-radius: 8px; cursor: pointer; }
+.icon-btn:hover { background: var(--bg-side); }
+@media (max-width: 760px) {
+  .mobile-bar { display: flex; align-items: center; gap: 4px; position: sticky; top: 0; z-index: 15; padding: 4px 8px; background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--border); }
+  .mobile-title { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sidebar { position: fixed; z-index: 40; top: 0; bottom: 0; left: 0; width: min(84vw, 320px); height: 100%; transform: translateX(-100%); transition: transform .18s ease; box-shadow: none; }
+  .sidebar.open { transform: none; box-shadow: 0 0 40px rgba(0,0,0,.25); }
+  .drawer-back { display: block; position: fixed; inset: 0; z-index: 35; background: rgba(0,0,0,.3); }
+  .page-title { font-size: 26px; }
+  /* iOS zooms into inputs under 16px */
+  .src-textarea, input, select, textarea { font-size: 16px; }
+}
+/* Touch screens: no keyboard hints; edits end with the 完了 button. */
+@media (hover: none) and (pointer: coarse) {
+  .mode-bar { display: none; }
+  .src-done { padding: 4px 12px; font-size: 14px; }
+  .doc { touch-action: manipulation; }
+}
+@media (hover: none) and (pointer: coarse) {
+  .doc-append .muted, .quick-btn kbd { display: none; }
+}
