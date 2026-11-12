@@ -329,7 +329,7 @@ function SaveIndicator({ saver, onConflict }: { saver: ReturnType<typeof usePage
 }
 
 function ModeBar({ editing, canEdit, roNotice }: { editing: boolean; canEdit: boolean; roNotice: boolean }) {
-  const mod = /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'
+  const alt = /Mac/.test(navigator.platform) ? '⌥' : 'Alt'
   return (
     <div className={`mode-bar ${editing ? 'mode-edit' : 'mode-view'}`} data-testid="mode-bar">
       {editing ? (
@@ -338,7 +338,7 @@ function ModeBar({ editing, canEdit, roNotice }: { editing: boolean; canEdit: bo
         </>
       ) : canEdit ? (
         <>
-          表示中 — <kbd>Enter</kbd> <kbd>i</kbd> <kbd>a</kbd> / ダブルクリックで編集 · 矢印 / <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> で移動 · <kbd>o</kbd> <kbd>O</kbd> で新しい行 · <kbd>{mod}</kbd>+クリックでリンク · 右クリックでコピー
+          表示中 — <kbd>Enter</kbd> <kbd>i</kbd> <kbd>a</kbd> / ダブルクリックで編集 · 矢印 / <kbd>h</kbd><kbd>j</kbd><kbd>k</kbd><kbd>l</kbd> で移動 · <kbd>o</kbd> <kbd>O</kbd> で新しい行 · リンクはクリックで開く（<kbd>{alt}</kbd>+クリックでカーソル） · 右クリックでコピー
         </>
       ) : (
         <>{roNotice ? <strong>閲覧者のため編集できません</strong> : '閲覧のみ'} — 選択して右クリックでコピー形式を選択</>
