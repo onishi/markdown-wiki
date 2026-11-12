@@ -8,6 +8,8 @@ export interface EditCtxValue {
   setText: (t: string) => void
   exit: () => void
   taRef: React.MutableRefObject<HTMLTextAreaElement | null>
+  /** Pasted / dropped image files (insert at the caret, upload). */
+  onImages?: (files: File[]) => void
 }
 
 export const EditCtx = createContext<EditCtxValue | null>(null)
@@ -99,6 +101,13 @@ export function SourceEditor() {
           autosize(e.target)
         }}
         onKeyDown={onKeyDown}
+        onPaste={(e) => {
+          const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'))
+          if (files.length && ctx.onImages) {
+            e.preventDefault()
+            ctx.onImages(files)
+          }
+        }}
         onCompositionEnd={() => {
           compEnd.current = performance.now()
         }}

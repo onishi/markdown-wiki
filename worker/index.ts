@@ -20,7 +20,8 @@ interface Env {
 
 function sqlDb(storage: DurableObjectStorage): DB {
   const sql = storage.sql
-  const clean = (p: SqlParam[]) => p.map((v) => (v === undefined ? null : v))
+  // storage.sql binds BLOBs as ArrayBuffer (and returns them as ArrayBuffer).
+  const clean = (p: SqlParam[]) => p.map((v) => (v === undefined ? null : v instanceof Uint8Array ? v.slice().buffer : v))
   return {
     prepare(q) {
       return {

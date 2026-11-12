@@ -5,6 +5,7 @@ import { buildTree, normalizePageName, type TreeNode } from '../../shared/pageNa
 import type { WikiResolver } from '../../shared/markdown/render'
 import { useSession } from '../App'
 import { Modal } from './Modal'
+import { QuickOpen } from './QuickOpen'
 import { Outline } from '../editor/Outline'
 import type { OutlineItem } from '../../shared/markdown/outline'
 
@@ -25,6 +26,8 @@ interface WikiCtxValue {
   resolveWiki: WikiResolver
   absoluteWiki: WikiResolver
   openNewPage: (prefill?: string) => void
+  /** ⌘K page switcher */
+  openQuick: () => void
   setOutline: (o: OutlineSource | null) => void
 }
 const WikiCtx = createContext<WikiCtxValue | null>(null)
@@ -76,6 +79,21 @@ export function WikiLayout() {
   }, [wiki, wid, loc, nav])
 
   const slug = wiki?.slug ?? wid!
+
+  // ⌘K / Ctrl+K anywhere in the wiki (capture: the source editor stops key propagation).
+  const [quick, setQuick] = useState(false)
+  useEffect(() => {
+    const isMac = /Mac/.test(navigator.platform)
+    const h = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === 'k' && (isMac ? e.metaKey : e.ctrlKey) && !e.altKey && !e.shiftKey && !e.isComposing) {
+        e.preventDefault()
+        e.stopPropagation()
+        setQuick((q) => !q)
+      }
+    }
+    window.addEventListener('keydown', h, true)
+    return () => window.removeEventListener('keydown', h, true)
+  }, [])
   const known = useMemo(() => new Set([...pages.map((p) => p.name), ...aliases.map((a) => a.name)]), [pages, aliases])
   const resolveWiki = useCallback<WikiResolver>((t) => ({ href: pageUrl(slug, t), exists: known.has(t) }), [slug, known])
   const absoluteWiki = useCallback<WikiResolver>((t) => ({ href: location.origin + pageUrl(slug, t), exists: true }), [slug])
@@ -101,7 +119,22 @@ export function WikiLayout() {
     resolveWiki,
     absoluteWiki,
     openNewPage: (prefill = '') => setNewPage(prefill),
+    openQuick: () => setQuick(true),
     setOutline,
+  }
+
+  const createAndOpen = async (name: string) => {
+    const n = normalizePageName(name)
+    const exists = pages.find((p) => p.name === n)
+    if (!exists) {
+      try {
+        await api('POST', `/api/wikis/${wid}/pages`, { name: n, content: '' })
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 409)) throw e
+      }
+      await reloadPages()
+    }
+    nav(pageUrl(slug, n))
   }
 
   return (
@@ -117,18 +150,20 @@ export function WikiLayout() {
           initial={newPage}
           onClose={() => setNewPage(null)}
           onCreate={async (name) => {
-            const n = normalizePageName(name)
-            const exists = pages.find((p) => p.name === n)
-            if (!exists) {
-              try {
-                await api('POST', `/api/wikis/${wid}/pages`, { name: n, content: '' })
-              } catch (e) {
-                if (!(e instanceof ApiError && e.status === 409)) throw e
-              }
-              await reloadPages()
-            }
+            await createAndOpen(name)
             setNewPage(null)
-            nav(pageUrl(slug, n))
+          }}
+        />
+      )}
+      {quick && (
+        <QuickOpen
+          pages={pages}
+          canEdit={value.canEdit}
+          onClose={() => setQuick(false)}
+          onOpen={(name) => (setQuick(false), nav(pageUrl(slug, name)))}
+          onCreate={(name) => {
+            setQuick(false)
+            createAndOpen(name).catch(() => setNewPage(name))
           }}
         />
       )}
@@ -137,7 +172,7 @@ export function WikiLayout() {
 }
 
 function Sidebar({ wikis, outline }: { wikis: WikiSummary[]; outline: OutlineSource | null }) {
-  const { wiki, pages, canEdit, openNewPage, role } = useWiki()
+  const { wiki, pages, canEdit, openNewPage, openQuick, role } = useWiki()
   const { me, logout } = useSession()
   const nav = useNavigate()
   const [q, setQ] = useState('')
@@ -196,6 +231,9 @@ function Sidebar({ wikis, outline }: { wikis: WikiSummary[]; outline: OutlineSou
       ) : (
         <>
         <input className="search" type="search" placeholder="ページ名で検索" value={q} onChange={(e) => setQ(e.target.value)} aria-label="ページ名で検索" data-testid="search" />
+        <button className="btn btn-block quick-btn" onClick={openQuick} data-testid="quick-open">
+          ページを開く… <kbd>{/Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'}K</kbd>
+        </button>
         {canEdit && (
           <button className="btn btn-block" onClick={() => openNewPage('')} data-testid="new-page">
             ＋ 新しいページ

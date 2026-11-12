@@ -2,7 +2,7 @@
  * Minimal synchronous SQLite interface shared by the Node server (node:sqlite, db-node.ts)
  * and the Cloudflare Durable Object (storage.sql, worker/index.ts).
  */
-export type SqlParam = string | number | null
+export type SqlParam = string | number | null | Uint8Array
 export interface Stmt {
   get(...params: SqlParam[]): unknown
   all(...params: SqlParam[]): unknown[]
@@ -67,6 +67,21 @@ CREATE TABLE IF NOT EXISTS pages (
 CREATE TABLE IF NOT EXISTS wiki_slug_aliases (
   slug TEXT PRIMARY KEY,
   wiki_id TEXT NOT NULL REFERENCES wikis(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS files (
+  id TEXT PRIMARY KEY,
+  wiki_id TEXT NOT NULL REFERENCES wikis(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  type TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  created_by TEXT REFERENCES users(id)
+);
+CREATE TABLE IF NOT EXISTS file_chunks (
+  file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+  seq INTEGER NOT NULL,
+  data BLOB NOT NULL,
+  PRIMARY KEY (file_id, seq)
 );
 CREATE TABLE IF NOT EXISTS page_aliases (
   wiki_id TEXT NOT NULL REFERENCES wikis(id) ON DELETE CASCADE,

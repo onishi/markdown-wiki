@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { HistoryDialog } from './HistoryDialog'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { api, ApiError, pageUrl, type Page } from '../api'
+import { api, ApiError, pageUrl, type Page, uploadImage } from '../api'
 import { normalizePageName } from '../../shared/pageName'
 import { DocEditor, type DocEditorHandle } from '../editor/DocEditor'
 import { useSession } from '../App'
@@ -163,7 +164,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
   const [notice, setNotice] = useState<string | null>(
     loaded.renamedFrom ? `「${loaded.renamedFrom}」は「${page.name}」に名前が変わりました。` : loaded.restored && !loaded.conflict ? '保存されていなかった変更をこのブラウザから復元しました。' : null,
   )
-  const [dialog, setDialog] = useState<'rename' | 'delete' | null>(null)
+  const [dialog, setDialog] = useState<'rename' | 'delete' | 'history' | null>(null)
   const [roNotice, setRoNotice] = useState(false)
 
   useEffect(() => {
@@ -199,6 +200,9 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
         <Breadcrumb name={page.name} />
         <div className="page-actions">
           <SaveIndicator saver={saver} onConflict={() => setShowConflict(true)} />
+          <button className="btn btn-small" onClick={() => setDialog('history')} data-testid="history">
+            履歴
+          </button>
           {canEdit && (
             <>
               <button className="btn btn-small" onClick={() => openNewPage(page.name + '/')} title="このページの下に子ページを作成">
@@ -231,6 +235,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
         onOpenWiki={openWiki}
         onEditingChange={setEditing}
         handleRef={editorHandle}
+        onUploadImage={canEdit ? (f) => uploadImage(wiki.id, f, f.name || 'image.png') : undefined}
         onReadOnlyAttempt={() => {
           setRoNotice(true)
           setTimeout(() => setRoNotice(false), 2000)
@@ -249,6 +254,20 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
         </section>
       )}
       <ModeBar editing={editing} canEdit={canEdit} roNotice={roNotice} />
+      {dialog === 'history' && (
+        <HistoryDialog
+          wikiId={wiki.id}
+          pageId={page.id}
+          current={saver.content}
+          canRestore={canEdit && saver.status !== 'conflict'}
+          onClose={() => setDialog(null)}
+          onRestore={(content, version) => {
+            saver.onChange(content)
+            setDialog(null)
+            setNotice(`版 ${version} の内容に戻しました（新しい版として保存されます。元に戻すときも履歴から選べます）。`)
+          }}
+        />
+      )}
       {showConflict && saver.conflict && (
         <ConflictDialog
           conflict={saver.conflict}

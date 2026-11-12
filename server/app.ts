@@ -33,7 +33,23 @@ export interface AppConfig {
 
 type Env = { Variables: { user: User } }
 
-const MAX_CONTENT = 2_000_000
+// A page (and each revision) is one SQLite row; Durable Object rows are capped at 2 MB,
+// so keep the UTF-8 size below that (≤ 3 bytes per UTF-16 unit).
+const MAX_CONTENT = 600_000
+const MAX_FILE = 10 * 1024 * 1024
+/** Rows are capped at 2 MB on Durable Objects: files are stored in 1 MB chunks. */
+const CHUNK = 1024 * 1024
+
+/** Image type from magic bytes (the client's Content-Type is not trusted). SVG is refused (script). */
+function sniffImage(b: Uint8Array): string | null {
+  const at = (i: number, ...xs: number[]) => xs.every((x, k) => b[i + k] === x)
+  if (at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return 'image/png'
+  if (at(0, 0xff, 0xd8, 0xff)) return 'image/jpeg'
+  if (at(0, 0x47, 0x49, 0x46, 0x38)) return 'image/gif'
+  if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return 'image/webp'
+  if (at(4, 0x66, 0x74, 0x79, 0x70) && (at(8, 0x61, 0x76, 0x69, 0x66) || at(8, 0x61, 0x76, 0x69, 0x73))) return 'image/avif'
+  return null
+}
 
 export function createApp(db: DB, cfg: AppConfig) {
   const app = new Hono<Env>()
@@ -374,6 +390,22 @@ export function createApp(db: DB, cfg: AppConfig) {
     return c.json({ page: p })
   })
 
+  /** Revision metadata, newest first (content is fetched per version). */
+  app.get('/api/wikis/:wid/pages/:pid/revisions', (c) => {
+    const { wikiId } = need(c, 'viewer')
+    const pid = c.req.param('pid')
+    if (!db.prepare('SELECT 1 FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, pid)) return c.json({ error: 'not_found' }, 404)
+    const before = Number(c.req.query('before') ?? Number.MAX_SAFE_INTEGER)
+    const rows = db
+      .prepare(
+        `SELECT r.version, r.created_at AS createdAt, length(r.content) AS length, u.name AS byName, u.email AS byEmail
+         FROM page_revisions r LEFT JOIN users u ON u.id = r.created_by
+         WHERE r.page_id = ? AND r.version < ? ORDER BY r.version DESC LIMIT 501`,
+      )
+      .all(pid, before) as unknown[]
+    return c.json({ revisions: rows.slice(0, 500), more: rows.length > 500 })
+  })
+
   app.get('/api/wikis/:wid/pages/:pid/revisions/:ver', (c) => {
     const { wikiId } = need(c, 'viewer')
     const r = db
@@ -487,6 +519,51 @@ export function createApp(db: DB, cfg: AppConfig) {
       }
     })
     return c.json({ renamed: [...renames].map(([from, to]) => ({ from, to })), rewritten, page: pageRow(wikiId, pid) })
+  })
+
+  // ---- files (images)
+
+  app.post('/api/wikis/:wid/files', async (c) => {
+    const { wikiId } = need(c, 'editor')
+    const len = Number(c.req.header('content-length') ?? 0)
+    if (len > MAX_FILE) return c.json({ error: 'too_large' }, 413)
+    const bytes = new Uint8Array(await c.req.arrayBuffer())
+    if (bytes.length > MAX_FILE) return c.json({ error: 'too_large' }, 413)
+    const type = sniffImage(bytes)
+    if (!type) return c.json({ error: 'unsupported_type' }, 415)
+    const name = (c.req.query('name') ?? 'image').replace(/[\u0000-\u001f\\/]/g, '').slice(0, 200) || 'image'
+    const id = crypto.randomUUID()
+    tx(db, () => {
+      db.prepare('INSERT INTO files (id, wiki_id, name, type, size, created_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, wikiId, name, type, bytes.length, Date.now(), c.get('user').id)
+      for (let i = 0, seq = 0; i < bytes.length; i += CHUNK, seq++) db.prepare('INSERT INTO file_chunks (file_id, seq, data) VALUES (?, ?, ?)').run(id, seq, bytes.subarray(i, i + CHUNK))
+    })
+    return c.json({ file: { id, name, type, size: bytes.length, url: `/api/wikis/${wikiId}/files/${id}` } }, 201)
+  })
+
+  app.get('/api/wikis/:wid/files/:fid', (c) => {
+    const { wikiId } = need(c, 'viewer')
+    const f = db.prepare('SELECT id, name, type, size FROM files WHERE wiki_id = ? AND id = ?').get(wikiId, c.req.param('fid')) as
+      | { id: string; name: string; type: string; size: number }
+      | undefined
+    if (!f) return c.json({ error: 'not_found' }, 404)
+    const out = new Uint8Array(f.size)
+    let at = 0
+    for (const ch of db.prepare('SELECT data FROM file_chunks WHERE file_id = ? ORDER BY seq').all(f.id) as { data: Uint8Array | ArrayBuffer }[]) {
+      const d = ch.data instanceof Uint8Array ? ch.data : new Uint8Array(ch.data)
+      out.set(d, at)
+      at += d.length
+    }
+    return new Response(out, {
+      headers: {
+        'content-type': f.type,
+        'content-length': String(f.size),
+        // Files never change (new upload = new id), but they are members-only.
+        'cache-control': 'private, max-age=31536000, immutable',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'none'; sandbox",
+        'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`,
+      },
+    })
   })
 
   app.delete('/api/wikis/:wid/pages/:pid', (c) => {

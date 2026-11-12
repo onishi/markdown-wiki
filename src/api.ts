@@ -58,3 +58,21 @@ export const wikiUrl = (slug: string) => `/w/${slug}`
 export const pageUrl = (slug: string, name: string) => `/w/${slug}/p/${encodePath(name)}`
 
 export const ROLE_LABEL: Record<Role, string> = { owner: 'オーナー', editor: '編集者', viewer: '閲覧者' }
+
+/** Upload an image to the wiki; returns its URL (members-only). */
+export async function uploadImage(wikiId: string, file: Blob, name: string): Promise<{ url: string; name: string }> {
+  let res: Response
+  try {
+    res = await fetch(`/api/wikis/${wikiId}/files?name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/octet-stream', 'x-requested-with': 'markdown-wiki' },
+      body: file,
+    })
+  } catch {
+    throw new ApiError(0, { error: 'network' })
+  }
+  const json = await res.json().catch(() => null)
+  if (!res.ok) throw new ApiError(res.status, json)
+  return json.file
+}

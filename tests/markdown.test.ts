@@ -279,3 +279,28 @@ describe('Enter continuation in the source editor', () => {
     expect(continueOnEnter('> abc', 2, 5)).toBeNull()
   })
 })
+
+import { lineDiff, groupRevisions } from '../shared/diff'
+
+describe('history diff', () => {
+  it('diffs lines and collapses long unchanged runs', () => {
+    const a = Array.from({ length: 20 }, (_, i) => `l${i}`).join('\n')
+    const b = a.replace('l10', 'L10').replace('l19', 'l19\nnew')
+    const d = lineDiff(a, b, 2)
+    expect(d.added).toBe(2)
+    expect(d.removed).toBe(1)
+    expect(d.lines.map((l) => (l.kind === 'skip' ? `…${l.count}` : `${l.kind[0]}:${l.text}`))).toEqual([
+      '…8', 's:l8', 's:l9', 'd:l10', 'a:L10', 's:l11', 's:l12', '…5', 's:l18', 's:l19', 'a:new',
+    ])
+  })
+  it('groups autosave revisions into edit sessions', () => {
+    const m = (version: number, min: number, who: string) => ({ version, createdAt: min * 60000, length: 0, byName: who, byEmail: who })
+    const g = groupRevisions([m(6, 100, 'a'), m(5, 99, 'a'), m(4, 95, 'a'), m(3, 80, 'a'), m(2, 79, 'b'), m(1, 1, 'b')])
+    expect(g.map((x) => [x.last.version, x.first.version, x.count])).toEqual([
+      [6, 4, 3],
+      [3, 3, 1],
+      [2, 2, 1],
+      [1, 1, 1],
+    ])
+  })
+})

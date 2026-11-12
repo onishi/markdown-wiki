@@ -204,6 +204,25 @@ describe('pages: save conflicts, rename, hierarchy', () => {
     expect(names).toEqual(['LISA2', 'LISA2/曲', 'LiSA', 'lisa/曲', 'ＬＩＳＡ/曲', 'ＬｉＳＡ'].sort())
   })
 
+  it('lists revisions newest first with their authors', async () => {
+    const a = await login(app, 'a@example.com')
+    const w = (await a.post('/api/wikis', { name: 'W' })).json.wiki
+    const p = (await a.post(`/api/wikis/${w.id}/pages`, { name: 'P', content: 'v1' })).json.page
+    await a.put(`/api/wikis/${w.id}/pages/${p.id}`, { content: 'v2', baseVersion: 1 })
+    await a.put(`/api/wikis/${w.id}/pages/${p.id}`, { content: 'v3!', baseVersion: 2 })
+    const r = (await a.get(`/api/wikis/${w.id}/pages/${p.id}/revisions`)).json
+    expect(r.revisions.map((x: any) => [x.version, x.length, x.byEmail])).toEqual([
+      [3, 3, 'a@example.com'],
+      [2, 2, 'a@example.com'],
+      [1, 2, 'a@example.com'],
+    ])
+    expect(r.more).toBe(false)
+    expect((await a.get(`/api/wikis/${w.id}/pages/${p.id}/revisions?before=3`)).json.revisions.map((x: any) => x.version)).toEqual([2, 1])
+    expect((await a.get(`/api/wikis/${w.id}/pages/${p.id}/revisions/1`)).json.revision.content).toBe('v1')
+    const out = await login(app, 'out@example.com')
+    expect((await out.get(`/api/wikis/${w.id}/pages/${p.id}/revisions`)).status).toBe(404)
+  })
+
   it('creates child pages without a parent page and resolves names', async () => {
     const a = await login(app, 'a@example.com')
     const w = (await a.post('/api/wikis', { name: 'W' })).json.wiki
@@ -274,5 +293,52 @@ describe('Google OAuth callback', () => {
     const session = cb.headers.getSetCookie().find((c) => c.startsWith('mw_session='))!.split(';')[0]
     const me = await app.request('/api/me', { headers: { cookie: session } })
     expect((await me.json()).user.email).toBe('g@example.com')
+  })
+})
+
+describe('image files', () => {
+  const PNG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+  const upload = (app: App, cookie: string, wid: string, bytes: Uint8Array, name = 'shot.png') =>
+    app.request(`/api/wikis/${wid}/files?name=${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/octet-stream', 'x-requested-with': 'markdown-wiki' },
+      body: bytes as unknown as BodyInit,
+    })
+  const cookieOf = async (app: App, email: string) =>
+    (await app.request(`/auth/dev-login?email=${encodeURIComponent(email)}`)).headers.get('set-cookie')!.split(';')[0]
+
+  it('stores images in chunks, serves them to members only, and sniffs the type', async () => {
+    const { app } = setup()
+    const a = await login(app, 'a@example.com')
+    const w = (await a.post('/api/wikis', { name: 'W' })).json.wiki
+    await a.post(`/api/wikis/${w.id}/invitations`, { email: 'v@example.com', role: 'viewer' })
+    const ca = await cookieOf(app, 'a@example.com')
+    const cv = await cookieOf(app, 'v@example.com')
+    const co = await cookieOf(app, 'out@example.com')
+
+    // 2.5 MB: spans three 1 MB chunks
+    const big = new Uint8Array(2.5 * 1024 * 1024)
+    big.set(PNG)
+    for (let i = PNG.length; i < big.length; i++) big[i] = i % 251
+    const r = await upload(app, ca, w.slug, big, '画面.png')
+    expect(r.status).toBe(201)
+    const f = ((await r.json()) as any).file
+    expect(f).toMatchObject({ name: '画面.png', type: 'image/png', size: big.length })
+    expect(f.url).toBe(`/api/wikis/${w.id}/files/${f.id}`)
+
+    const got = await app.request(f.url, { headers: { cookie: cv } })
+    expect(got.status).toBe(200)
+    expect(got.headers.get('content-type')).toBe('image/png')
+    expect(got.headers.get('x-content-type-options')).toBe('nosniff')
+    expect(new Uint8Array(await got.arrayBuffer())).toEqual(big)
+    expect((await app.request(f.url, { headers: { cookie: co } })).status).toBe(404)
+    expect((await app.request(f.url)).status).toBe(401)
+
+    // viewers can't upload; non-images (incl. SVG) are refused; size is capped
+    expect((await upload(app, cv, w.id, big)).status).toBe(403)
+    expect((await upload(app, ca, w.id, new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>'))).status).toBe(415)
+    const huge = new Uint8Array(10 * 1024 * 1024 + 1)
+    huge.set(PNG)
+    expect((await upload(app, ca, w.id, huge)).status).toBe(413)
   })
 })
