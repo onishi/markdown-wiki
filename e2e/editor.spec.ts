@@ -642,3 +642,25 @@ test.describe('[[ completion', () => {
   })
 })
 
+
+test.describe('below the last line', () => {
+  test('↓ on the last line parks the caret on a virtual new line; Enter starts a paragraph there', async ({ page }) => {
+    await caretAt(page, 'も自動リンク', 0)
+    await page.keyboard.press('ArrowDown')
+    const append = page.getByTestId('append')
+    await expect(append).toHaveClass(/at-end/)
+    await expect(page.getByTestId('caret')).toHaveCount(0)
+    await page.keyboard.press('j') // stays
+    await expect(append).toHaveClass(/at-end/)
+    await page.keyboard.press('ArrowUp') // back to the last line
+    await expect(append).not.toHaveClass(/at-end/)
+    expect(await focusInfo(page)).toMatchObject({ text: expect.stringContaining('も自動リンク') })
+    await page.keyboard.press('j')
+    await page.keyboard.press('Enter')
+    const ta = page.locator('[data-testid=src-editor] textarea')
+    await expect(ta).toBeFocused()
+    await page.keyboard.insertText('末尾に足した段落')
+    await page.keyboard.press('Escape')
+    expect(await source(page)).toBe(SAMPLE.replace(/\n?$/, '') + '\n\n末尾に足した段落' + (SAMPLE.endsWith('\n') ? '\n' : ''))
+  })
+})

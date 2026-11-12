@@ -71,6 +71,7 @@ export function DocEditor(props: DocEditorProps) {
   const { source, onChange, readOnly = false, listMode = 'list', softBreak = 'break', resolveWiki } = props
   const rootRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
+  const appendRef = useRef<HTMLButtonElement | null>(null)
   const [edit, setEdit] = useState<EditState | null>(null)
   const editRef = useRef<EditState | null>(null)
   editRef.current = edit
@@ -190,7 +191,12 @@ export function DocEditor(props: DocEditorProps) {
   }, [selectionInDoc])
 
   useEffect(() => {
-    const onSel = () => paint()
+    const onSel = () => {
+      // The caret really moved elsewhere (late events for the same position don't count).
+      const sel = document.getSelection()
+      if (atEndRef.current && (sel?.focusNode !== atEndFrom.current[0] || sel?.focusOffset !== atEndFrom.current[1] || !sel?.isCollapsed)) setAtEnd(false)
+      paint()
+    }
     document.addEventListener('selectionchange', onSel)
     window.addEventListener('resize', onSel)
     return () => {
@@ -527,11 +533,11 @@ export function DocEditor(props: DocEditorProps) {
    * DOM order instead, so it cannot be used for up/down inside tables.
    */
   const goalX = useRef<number | null>(null)
-  const verticalMove = (sel: Selection, alter: 'move' | 'extend', dir: 1 | -1) => {
+  const verticalMove = (sel: Selection, alter: 'move' | 'extend', dir: 1 | -1): boolean => {
     const root = rootRef.current!
     const focus: [Node, number] = [sel.focusNode!, sel.focusOffset]
     let cur = caretRect(focus[0], focus[1])
-    if (!cur) return
+    if (!cur) return false
     if (cur.top < 0 || cur.bottom > window.innerHeight) {
       window.scrollBy(0, cur.top - window.innerHeight / 2)
       cur = caretRect(focus[0], focus[1])!
@@ -560,12 +566,36 @@ export function DocEditor(props: DocEditorProps) {
           if (alter === 'extend') sel.extend(p.node, p.offset)
           else sel.collapse(p.node, p.offset)
           goalX.current = x
-          return
+          return true
         }
       }
       y += dir * 4
     }
     goalX.current = x
+    return false
+  }
+
+  /**
+   * "Below the last line": moving down from the last line parks the caret on a virtual
+   * empty line after the document (the 書き足す row) — Enter / i / a / o there start a new
+   * paragraph at the end, ↑ goes back.  The source has no trailing line for this.
+   */
+  const [atEnd, setAtEndState] = useState(false)
+  const atEndRef = useRef(false)
+  /** Where the real caret was when the virtual line was entered. */
+  const atEndFrom = useRef<[Node | null, number]>([null, 0])
+  const setAtEnd = (v: boolean) => {
+    atEndRef.current = v
+    if (v) {
+      const sel = document.getSelection()
+      atEndFrom.current = [sel?.focusNode ?? null, sel?.focusOffset ?? 0]
+    }
+    setAtEndState(v)
+  }
+  const appendAtEnd = () => {
+    setAtEnd(false)
+    if (liveTree.children.length) startEdit(source.length, 'below')
+    else startEdit(0)
   }
 
   type Move = { dir: 'forward' | 'backward'; gran: 'character' | 'word' | 'line' | 'lineboundary' | 'documentboundary' }
@@ -579,7 +609,13 @@ export function DocEditor(props: DocEditorProps) {
         if (m.dir === 'backward') sel.collapseToStart()
         else sel.collapseToEnd()
       }
-      verticalMove(sel, alter, m.dir === 'forward' ? 1 : -1)
+      const moved = verticalMove(sel, alter, m.dir === 'forward' ? 1 : -1)
+      if (!moved && !extend && m.dir === 'forward' && !readOnly && sel.isCollapsed) {
+        setAtEnd(true)
+        setMenu(null)
+        requestAnimationFrame(() => appendRef.current?.scrollIntoView({ block: 'nearest' }))
+        return
+      }
     } else {
       goalX.current = null
       if (!extend && !sel.isCollapsed && m.gran === 'character') {
@@ -596,6 +632,23 @@ export function DocEditor(props: DocEditorProps) {
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (edit || (e.target as Element).closest('.src-editor')) return
     if (isImeKey(e, compEnd.current)) return
+    if (atEndRef.current) {
+      const plain = !e.metaKey && !e.ctrlKey && !e.altKey
+      const macCtrl = /Mac/.test(navigator.platform) && e.ctrlKey && !e.metaKey && !e.altKey
+      if (plain && !e.shiftKey && (e.key === 'Enter' || e.key === 'i' || e.key === 'a' || e.key === 'o')) {
+        e.preventDefault()
+        return appendAtEnd()
+      }
+      if ((plain && (e.key === 'ArrowDown' || e.key === 'j')) || (macCtrl && e.key === 'n')) {
+        e.preventDefault()
+        return // already below the last line
+      }
+      setAtEnd(false)
+      if ((plain && (e.key === 'ArrowUp' || e.key === 'k' || e.key === 'Escape')) || (macCtrl && e.key === 'p')) {
+        e.preventDefault()
+        return // back onto the last line (the caret never left it)
+      }
+    }
     const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
     const mod = e.metaKey || e.ctrlKey
     /** App shortcuts (select all, …): Cmd on macOS, Ctrl elsewhere. */
@@ -737,6 +790,7 @@ export function DocEditor(props: DocEditorProps) {
     if (target.closest('.src-editor') || target.closest('.doc-menu') || target.closest('.gutter')) return
     setMenu(null)
     setLineSel(null)
+    if (atEndRef.current) setAtEnd(false)
     if (target.matches('input[type=checkbox]')) {
       e.preventDefault()
       return
@@ -1106,7 +1160,7 @@ export function DocEditor(props: DocEditorProps) {
           </div>
         )}
         {elements}
-        {caret && focused && !edit && <div className="caret" data-testid="caret" style={{ left: caret.x, top: caret.y, height: caret.h }} key={`${caret.x},${caret.y}`} />}
+        {caret && focused && !edit && !atEnd && <div className="caret" data-testid="caret" style={{ left: caret.x, top: caret.y, height: caret.h }} key={`${caret.x},${caret.y}`} />}
         {menu && !edit && (
           <div className={`doc-menu doc-menu-${menu.kind}`} style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.preventDefault()} role="menu">
             {menu.kind === 'link' && menu.link && (
@@ -1180,12 +1234,23 @@ export function DocEditor(props: DocEditorProps) {
       </div>
       {!readOnly && !edit && (
         <button
-          className="doc-append"
+          ref={appendRef}
+          className={`doc-append ${atEnd && focused ? 'at-end' : ''}`}
           data-testid="append"
-          onClick={() => (liveTree.children.length ? startEdit(source.length, 'below') : startEdit(0))}
-          title="文書の末尾に新しい段落を書き始めます（キーボードでは o / O）"
+          tabIndex={-1}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={appendAtEnd}
+          title="文書の末尾に新しい段落を書き始めます（最後の行から ↓ でもここに来られます）"
         >
-          ＋ 書き足す <span className="muted">（<kbd>o</kbd> で下に / <kbd>O</kbd> で上に新しい行）</span>
+          {atEnd && focused ? (
+            <>
+              <span className="append-caret" /> <kbd>Enter</kbd> で新しい段落を書き始める <span className="muted">（<kbd>↑</kbd> で戻る）</span>
+            </>
+          ) : (
+            <>
+              ＋ 書き足す <span className="muted">（最後の行から <kbd>↓</kbd> / <kbd>o</kbd> で下に新しい行）</span>
+            </>
+          )}
         </button>
       )}
     </EditCtx.Provider>
