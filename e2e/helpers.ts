@@ -15,11 +15,14 @@ export async function caretAt(page: Page, text: string, index: number, opts: { w
       r.setStart(t, at)
       r.setEnd(t, Math.min(at + 1, t.length))
       const rect = r.getBoundingClientRect()
-      return { x: rect.left + 0.5, y: rect.top + rect.height / 2 }
+      return { x: rect.left + 0.5, y: rect.top + rect.height / 2, inLink: !!span.closest('a') }
     },
     { text, index, within: opts.within, nth: opts.nth },
   )
+  // A plain click on a link opens it; Alt+click places the caret inside it.
+  if (pt.inLink) await page.keyboard.down('Alt')
   await page.mouse.click(pt.x, pt.y)
+  if (pt.inLink) await page.keyboard.up('Alt')
   return pt
 }
 

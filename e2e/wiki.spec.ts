@@ -74,9 +74,8 @@ test('create wiki and pages, autosave, wiki links, hierarchy, rename', async ({ 
   await expect(page.getByTestId('outline').locator('button')).toHaveText(['ようこそ'])
   await page.getByRole('tab', { name: 'ページ' }).click()
 
-  // follow a link to a missing page via the link menu, then create it
+  // follow a link to a missing page with one click, then create it
   await page.locator('a.wikilink').click()
-  await page.locator('.doc-menu-link button').click()
   await expect(page.getByText('このページはまだ作成されていません。')).toBeVisible()
   await page.getByTestId('create-missing').click()
   await expect(page.locator('.page-title')).toHaveText('認証')
@@ -108,10 +107,7 @@ test('create wiki and pages, autosave, wiki links, hierarchy, rename', async ({ 
   await expect(page).toHaveURL(new RegExp(encodeURI('設計/認証').replace(/[/]/g, '\\/') + '$'))
   await page.goto(`/w/${wid}/p/Home`)
   await expect(page.locator('a.wikilink')).not.toHaveClass(/missing/)
-  const box = await page.locator('a.wikilink').boundingBox()
-  await page.keyboard.down('ControlOrMeta')
-  await page.mouse.click(box!.x + 4, box!.y + 4)
-  await page.keyboard.up('ControlOrMeta')
+  await page.locator('a.wikilink').click()
   await expect(page.locator('.page-title')).toHaveText('認証')
   await expect(page.getByText('「開発/API/認証」は「設計/認証」に名前が変わりました。')).toBeVisible()
   await expect(page.locator('[data-testid=doc]')).toContainText('認証の説明')

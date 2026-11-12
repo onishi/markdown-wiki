@@ -18,9 +18,11 @@ test.describe('cursor ↔ source mapping', () => {
     expect(ta.before.endsWith('**太字')).toBe(true)
   })
 
-  test('double-click inside link text opens the editor at that character', async ({ page }) => {
+  test('Alt+double-click inside link text opens the editor at that character', async ({ page }) => {
     const pt = await caretAt(page, 'リンクのテキスト', 4) // before 「テ」
+    await page.keyboard.down('Alt')
     await page.mouse.dblclick(pt.x, pt.y)
+    await page.keyboard.up('Alt')
     const ta = await textarea(page)
     expect(ta.before.endsWith('[リンクの')).toBe(true)
   })
@@ -311,9 +313,9 @@ test.describe('selection and copy', () => {
 })
 
 test.describe('links', () => {
-  test('click places the caret, link menu and Cmd/Ctrl+click open', async ({ page }) => {
+  test('click opens; Alt+click places the caret (with link menu); Cmd/Ctrl+click opens in a new tab', async ({ page, context }) => {
     const url = page.url()
-    await caretAt(page, 'リンクのテキスト', 2)
+    await caretAt(page, 'リンクのテキスト', 2) // Alt+click
     expect(page.url()).toBe(url)
     expect(await focusInfo(page)).toMatchObject({ text: 'リンクのテキスト', offset: 2 })
     await expect(page.locator('.doc-menu-link')).toContainText('https://example.com')
@@ -323,11 +325,24 @@ test.describe('links', () => {
     await caretAt(page, '開発/API/認証', 1)
     await expect(page.locator('.doc-menu-link button')).toHaveText('開く')
     await page.locator('.doc-menu-link button').click()
-    const box = await page.locator('a.wikilink').first().boundingBox()
-    await page.keyboard.down('ControlOrMeta')
-    await page.mouse.click(box!.x + 5, box!.y + 5)
-    await page.keyboard.up('ControlOrMeta')
+    await expect.poll(() => logs.filter((l) => l === 'open wiki 開発/API/認証').length).toBe(1)
+    // a plain click opens at once
+    const box = (await page.locator('a.wikilink').first().boundingBox())!
+    await page.mouse.click(box.x + 5, box.y + 5)
     await expect.poll(() => logs.filter((l) => l === 'open wiki 開発/API/認証').length).toBe(2)
+    // a drag starting on the link selects instead of opening
+    await page.mouse.move(box.x + 3, box.y + 5)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width - 3, box.y + 5, { steps: 4 })
+    await page.mouse.up()
+    expect((await focusInfo(page)).selected.length).toBeGreaterThan(3)
+    expect(logs.filter((l) => l === 'open wiki 開発/API/認証').length).toBe(2)
+    // Cmd/Ctrl+click: new tab
+    const popup = context.waitForEvent('page')
+    await page.keyboard.down('ControlOrMeta')
+    await page.mouse.click(box.x + 5, box.y + 5)
+    await page.keyboard.up('ControlOrMeta')
+    expect((await popup).url()).toContain(encodeURIComponent('開発'))
   })
 })
 

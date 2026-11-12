@@ -771,7 +771,11 @@ export function DocEditor(props: DocEditorProps) {
     const a = target.closest('a')
     if (a && rootRef.current?.contains(a)) {
       e.preventDefault()
-      if (linkPolicy[gestureOf(e)] === 'open') openLink(linkInfo(a))
+      // A drag or Shift+click that made a selection is a selection, not a link click.
+      if (e.shiftKey || (selectionInDoc() && !document.getSelection()!.isCollapsed)) return
+      const action = linkPolicy[gestureOf(e)]
+      if (action === 'open') openLink(linkInfo(a))
+      else if (action === 'openNewTab') openLink(linkInfo(a), true)
     }
   }
 
@@ -784,10 +788,11 @@ export function DocEditor(props: DocEditorProps) {
     if (next) emit(source.slice(0, at) + next + source.slice(at + 3))
   }
 
-  const openLink = (l: Menu['link']) => {
+  const openLink = (l: Menu['link'], newTab = false) => {
     if (!l) return
     setMenu(null)
-    if (l.wiki) propsRef.current.onOpenWiki(l.wiki)
+    if (l.wiki && newTab && l.href && l.href !== '#') window.open(new URL(l.href, location.href).href, '_blank', 'noopener')
+    else if (l.wiki) propsRef.current.onOpenWiki(l.wiki)
     else if (l.href && l.href !== '#') {
       if (l.href.startsWith('#')) document.getElementById(l.href.slice(1))?.scrollIntoView()
       else window.open(l.href, '_blank', 'noopener,noreferrer')
@@ -926,7 +931,7 @@ export function DocEditor(props: DocEditorProps) {
                 <button onClick={() => openLink(menu.link)} role="menuitem">
                   {menu.link.missing ? 'ページを作成' : '開く'}
                 </button>
-                <span className="doc-menu-hint">{/Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'}+クリックでも開けます</span>
+                <span className="doc-menu-hint">リンクはクリックで開きます</span>
               </>
             )}
             {lineSel && menu.kind !== 'link' && (
