@@ -286,3 +286,127 @@ test('wiki slug: /w/<slug>/p/<page> URLs; changing it keeps old URLs working', a
   await expect(page.getByText(`識別子「${slug}-new」はすでに使われています。`)).toBeVisible()
   await page.context().close()
 })
+
+test('history: edit sessions with diffs, restore an older version', async ({ browser }) => {
+  const alice = await login(browser, uniq('hist-a'))
+  const wid = await createWiki(alice, '履歴 wiki')
+  const bobEmail = uniq('hist-b')
+  await apiCall(alice, 'POST', `/api/wikis/${wid}/invitations`, { email: bobEmail, role: 'editor' })
+  await newPage(alice, 'Doc')
+  await writeBody(alice, '最初の文章')
+  await saved(alice)
+
+  const bob = await login(browser, bobEmail)
+  await bob.goto(alice.url())
+  await expect(bob.locator('[data-testid=doc]')).toContainText('最初の文章')
+  await writeBody(bob, 'ボブが書き換えた')
+  await saved(bob)
+
+  await alice.reload()
+  await expect(alice.locator('[data-testid=doc]')).toContainText('ボブが書き換えた')
+  await alice.getByTestId('history').click()
+  const list = alice.getByTestId('history-list').locator('button:not(.link-btn)')
+  await expect(list).toHaveCount(3) // bob, alice, creation
+  await expect(alice.getByTestId('diff')).toContainText('ボブが書き換えた')
+  await list.nth(1).click()
+  await expect(alice.getByTestId('diff').locator('.diff-add')).toHaveText(/最初の文章/)
+  await alice.getByTestId('restore').click()
+  await expect(alice.locator('[data-testid=doc]')).toHaveText(/最初の文章/)
+  await expect(alice.getByText(/の内容に戻しました/)).toBeVisible()
+  await saved(alice)
+  const pages = (await apiCall(alice, 'GET', `/api/wikis/${wid}/pages`)).json.pages
+  const p = (await apiCall(alice, 'GET', `/api/wikis/${wid}/pages/${pages[0].id}`)).json.page
+  expect(p.content).toBe('最初の文章')
+  expect(p.version).toBe(4) // restoring adds a version; nothing is deleted
+  await alice.context().close()
+  await bob.context().close()
+})
+
+/** Paste a generated PNG into `selector` (a real ClipboardEvent carrying a File). */
+async function pastePng(page: Page, selector: string, name = 'スクショ.png') {
+  await page.evaluate(
+    async ({ selector, name }) => {
+      const c = document.createElement('canvas')
+      c.width = 24
+      c.height = 16
+      const g = c.getContext('2d')!
+      g.fillStyle = '#2f6feb'
+      g.fillRect(0, 0, 24, 16)
+      const blob: Blob = await new Promise((r) => c.toBlob((b) => r(b!), 'image/png'))
+      const dt = new DataTransfer()
+      dt.items.add(new File([blob], name, { type: 'image/png' }))
+      document.querySelector(selector)!.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+    },
+    { selector, name },
+  )
+}
+
+test('images: paste in edit mode and in display mode, served to members', async ({ browser }) => {
+  const page = await login(browser, uniq('img'))
+  const wid = await createWiki(page, '画像 wiki')
+  await newPage(page, 'Pics')
+  await writeBody(page, '画像の前の段落')
+  await saved(page)
+
+  // edit mode: paste at the caret
+  await page.getByText('画像の前の段落').dblclick()
+  const ta = page.locator('[data-testid=src-editor] textarea')
+  await ta.evaluate((t: HTMLTextAreaElement) => t.setSelectionRange(3, 3)) // mid-line: 画像の|前の段落
+  await pastePng(page, '[data-testid=src-editor] textarea')
+  await expect(ta).toHaveValue(/^画像の\n!\[スクショ\]\(\/api\/wikis\/[0-9a-f-]+\/files\/[0-9a-f-]+\)\n前の段落$/)
+  await page.keyboard.press('Escape')
+  const img = page.locator('[data-testid=doc] img').first()
+  await expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth)).toBe(24)
+  await saved(page)
+
+  // display mode: paste goes on a new line below the caret's block
+  await page.getByTestId('doc').click()
+  await page.keyboard.press('ControlOrMeta+ArrowUp')
+  await pastePng(page, '[data-testid=doc]', '二枚目.png')
+  await expect(page.locator('[data-testid=src-editor] textarea')).toHaveValue(/!\[二枚目\]\(\/api\/wikis\//)
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-testid=doc] img')).toHaveCount(2)
+  await saved(page)
+
+  // members only
+  const src = await img.getAttribute('src')
+  const out = await login(browser, uniq('img-out'))
+  expect((await out.request.get(src!)).status()).toBe(404)
+  expect((await page.request.get(src!)).status()).toBe(200)
+  void wid
+  await page.context().close()
+  await out.context().close()
+})
+
+test('quick open: Cmd/Ctrl+K finds pages by part of the name and can create one', async ({ browser }) => {
+  const page = await login(browser, uniq('quick'))
+  await createWiki(page, 'Quick wiki')
+  await newPage(page, '開発/API/認証')
+  await newPage(page, '議事録/2026-11')
+  await page.keyboard.press('ControlOrMeta+k')
+  const input = page.getByTestId('quick-open-input')
+  await expect(input).toBeFocused()
+  await input.fill('認証')
+  await expect(page.getByTestId('quick-open-list').locator('button').first()).toHaveText('開発/API/認証')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.page-title')).toHaveText('認証')
+
+  // works while editing too; fuzzy match; ↓ + Enter
+  await page.getByTestId('doc').click()
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('ControlOrMeta+k')
+  await input.fill('gjr')
+  await expect(page.getByTestId('quick-open-list').locator('button')).toHaveCount(1) // only the create row
+  await input.fill('議 11')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.page-title')).toHaveText('2026-11')
+
+  // create a new page from the switcher
+  await page.keyboard.press('ControlOrMeta+k')
+  await input.fill('新しい/メモ')
+  await expect(page.getByTestId('quick-open-list').locator('button').last()).toHaveText('＋ 「新しい/メモ」を作成')
+  await page.keyboard.press('ArrowDown')
+  await page.keyboard.press('Enter')
+  await expect(page.locator('.page-title')).toHaveText('メモ')
+  await page.context().close()
+})

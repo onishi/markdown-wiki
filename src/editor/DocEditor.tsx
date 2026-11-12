@@ -26,6 +26,8 @@ export interface DocEditorProps {
   onReadOnlyAttempt?: () => void
   /** Imperative API (outline jumps). */
   handleRef?: React.MutableRefObject<DocEditorHandle | null>
+  /** Store a pasted / dropped image and return its URL (no handler: images are not accepted). */
+  onUploadImage?: (file: File) => Promise<{ url: string }>
 }
 
 export interface DocEditorHandle {
@@ -855,6 +857,116 @@ export function DocEditor(props: DocEditorProps) {
     }
   }
 
+  // ------------------------------------------------------------ images
+
+  /**
+   * Pasted / dropped images are inserted as `![…](#uploading-…)` placeholders right away
+   * (so typing can continue) and swapped for the real URL when the upload finishes —
+   * in the source editor if the placeholder is still there, otherwise in the document.
+   */
+  const pendingFiles = useRef<File[] | null>(null)
+  const replacements = useRef(new Map<string, string>())
+  const sourceRef = useRef(source)
+  sourceRef.current = source
+
+  const applyReplacements = useCallback(() => {
+    for (const [token, repl] of [...replacements.current]) {
+      const ta = taRef.current
+      if (editRef.current && ta) {
+        const i = ta.value.indexOf(token)
+        if (i >= 0) {
+          const [s0, s1] = [ta.selectionStart, ta.selectionEnd]
+          const shift = (x: number) => (x >= i + token.length ? x + repl.length - token.length : Math.min(x, i + repl.length))
+          ta.focus({ preventScroll: true })
+          ta.setSelectionRange(i, i + token.length)
+          // execCommand keeps it one native undo step; empty replacement = delete.
+          if (!document.execCommand(repl ? 'insertText' : 'delete', false, repl)) continue
+          ta.setSelectionRange(shift(s0), shift(s1))
+          replacements.current.delete(token)
+          continue
+        }
+        if (editRef.current.frozenSrc.slice(0, editRef.current.unit.start).includes(token) || editRef.current.frozenSrc.slice(editRef.current.unit.end).includes(token))
+          continue // outside the block being edited: apply after the edit ends
+      }
+      const src = sourceRef.current
+      if (!editRef.current && src.includes(token)) emit(src.replace(token, repl))
+      if (!editRef.current || !src.includes(token)) replacements.current.delete(token)
+    }
+  }, [emit])
+  useEffect(() => applyReplacements(), [edit, source, applyReplacements])
+
+  const imageFiles = (dt: DataTransfer | null) => (dt ? [...dt.files].filter((f) => f.type.startsWith('image/')) : [])
+
+  const insertImages = useCallback(
+    (files: File[]) => {
+      const upload = propsRef.current.onUploadImage
+      const ta = taRef.current
+      if (!upload || !ta || !files.length) return
+      const items = files.map((f) => {
+        const alt = (f.name.replace(/\.[a-z0-9]+$/i, '') || 'image').replace(/[\[\]\n\\]/g, ' ').slice(0, 80)
+        return { f, alt, token: `![アップロード中… ${alt}](#uploading-${Math.random().toString(36).slice(2, 10)})` }
+      })
+      // Each image on a line of its own.
+      const before = ta.value.slice(0, ta.selectionStart)
+      const after = ta.value.slice(ta.selectionEnd)
+      const lead = before && !before.endsWith('\n') ? '\n' : ''
+      const trail = after && !after.startsWith('\n') ? '\n' : ''
+      document.execCommand('insertText', false, lead + items.map((x) => x.token).join('\n') + trail)
+      if (trail) ta.setSelectionRange(ta.selectionStart - 1, ta.selectionStart - 1)
+      for (const it of items) {
+        upload(it.f)
+          .then((r) => replacements.current.set(it.token, `![${it.alt}](${r.url})`))
+          .catch((e) => {
+            replacements.current.set(it.token, '')
+            const code = e?.body?.error
+            setToast(code === 'too_large' ? '画像が大きすぎます（10 MB まで）' : code === 'unsupported_type' ? 'この形式の画像は使えません（PNG / JPEG / GIF / WebP / AVIF）' : '画像をアップロードできませんでした')
+          })
+          .finally(applyReplacements)
+      }
+    },
+    [applyReplacements],
+  )
+
+  // Display mode: paste / drop opens a new line below the caret's block and inserts there.
+  useEffect(() => {
+    if (edit && pendingFiles.current && taRef.current) {
+      const f = pendingFiles.current
+      pendingFiles.current = null
+      insertImages(f)
+    }
+  }, [edit, insertImages])
+  const acceptImages = (files: File[]) => {
+    if (!files.length || !props.onUploadImage) return false
+    if (readOnly) {
+      props.onReadOnlyAttempt?.()
+      return true
+    }
+    pendingFiles.current = files
+    openNewLine('below')
+    return true
+  }
+  const onPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    if (edit) return // the source editor handles it
+    if (acceptImages(imageFiles(e.clipboardData))) e.preventDefault()
+  }
+  const onDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    if (props.onUploadImage && e.dataTransfer.types.includes('Files')) e.preventDefault()
+  }
+  const onDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    const files = imageFiles(e.dataTransfer)
+    if (!files.length || !props.onUploadImage) return
+    e.preventDefault()
+    if (edit) {
+      if ((e.target as Element).closest('.src-editor')) insertImages(files)
+      return
+    }
+    // Put the caret where the files were dropped, then insert below that block.
+    const pt = pointFromCoords(e.clientX, e.clientY)
+    const p = pt && caretPoint(pt.node, pt.offset)
+    if (p) document.getSelection()?.collapse(p.node, p.offset)
+    acceptImages(files)
+  }
+
   // ------------------------------------------------------------ edit context
 
   const editCtx: EditCtxValue | null = useMemo(
@@ -874,9 +986,10 @@ export function DocEditor(props: DocEditorProps) {
               emit(e.frozenSrc.slice(0, e.unit.start) + t + e.frozenSrc.slice(e.unit.end))
             },
             exit: () => exitEdit(),
+            onImages: props.onUploadImage ? insertImages : undefined,
           }
         : null,
-    [edit, emit, exitEdit],
+    [edit, emit, exitEdit, insertImages, props.onUploadImage],
   )
 
   const hasSelection = menu?.kind === 'context' ? !!selectionRange() : true
@@ -894,6 +1007,9 @@ export function DocEditor(props: DocEditorProps) {
         onMouseDown={onMouseDown}
         onClick={onClick}
         onCopy={onCopy}
+        onPaste={onPaste}
+        onDragOver={onDragOver}
+        onDrop={onDrop}
         onContextMenu={onContextMenu}
         onFocus={() => {
           setFocused(true)
