@@ -404,3 +404,7 @@ label.check { display: flex; gap: 8px; align-items: center; margin: 10px 0; font
 @media (hover: none) and (pointer: coarse) {
   .doc-append .muted, .quick-btn kbd { display: none; }
 }
+
+/* The virtual line below the document's last line. */
+.doc-append.at-end { border-color: color-mix(in srgb, var(--accent) 45%, transparent); border-style: solid; color: var(--fg); background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
+.append-caret { display: inline-block; width: 2px; height: 1.15em; vertical-align: -0.2em; background: var(--accent); animation: blink 1.06s steps(1) infinite; }
