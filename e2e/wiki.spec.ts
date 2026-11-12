@@ -100,6 +100,7 @@ test('create wiki and pages, autosave, wiki links, hierarchy, rename', async ({ 
 
   // rename without rewriting links: the old link keeps working through an alias
   await page.goto(`/w/${wid}/p/${encodeURI('開発/API/認証')}`)
+  await page.getByTestId('page-menu').click()
   await page.getByTestId('rename').click()
   await page.getByTestId('rename-input').fill('設計/認証')
   await page.getByLabel(/を新しい名前に書き換える/).uncheck()
@@ -409,4 +410,54 @@ test('quick open: Cmd/Ctrl+K finds pages by part of the name and can create one'
   await page.keyboard.press('Enter')
   await expect(page.locator('.page-title')).toHaveText('メモ')
   await page.context().close()
+})
+
+test('page header: … menu, ? shortcut list', async ({ browser }) => {
+  const page = await login(browser, uniq('ui'))
+  await createWiki(page, 'UI wiki')
+  await newPage(page, 'Doc')
+  await expect(page.getByTestId('rename')).toHaveCount(0) // tucked into the … menu
+  await page.getByTestId('page-menu').click()
+  await expect(page.getByRole('menuitem')).toHaveText(['子ページを作成', '名前を変更', '削除'])
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('menuitem')).toHaveCount(0)
+  await page.getByTestId('help-button').click()
+  await expect(page.getByTestId('help')).toContainText('直前の編集を取り消す')
+  await page.keyboard.press('Escape')
+  await page.getByTestId('doc').click()
+  await page.keyboard.press('?')
+  await expect(page.getByTestId('help')).toBeVisible()
+  await page.context().close()
+})
+
+test('phone: drawer sidebar, tap → 編集, 完了 button', async ({ browser }) => {
+  const email = uniq('phone')
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true })
+  const page = await ctx.newPage()
+  await page.goto(`/auth/dev-login?email=${encodeURIComponent(email)}&returnTo=/`)
+  await createWiki(page, 'スマホ wiki')
+  // sidebar is a drawer
+  await expect(page.getByTestId('new-page')).not.toBeInViewport()
+  await page.getByTestId('open-drawer').tap()
+  await expect(page.getByTestId('new-page')).toBeInViewport()
+  await page.getByTestId('new-page').tap()
+  await page.getByTestId('new-page-name').fill('メモ')
+  await page.getByRole('button', { name: '作成', exact: true }).tap()
+  await expect(page.locator('.page-title')).toHaveText('メモ')
+  await expect(page.getByTestId('new-page')).not.toBeInViewport() // closed on navigation
+  // empty page: a tap starts writing; 完了 ends it (no Esc key on phones)
+  await page.getByTestId('doc').tap()
+  const ta = page.locator('[data-testid=src-editor] textarea')
+  await expect(ta).toBeVisible()
+  await ta.fill('スマホで書いた')
+  await page.getByTestId('src-done').tap()
+  await expect(ta).toHaveCount(0)
+  await saved(page)
+  // tapping text shows an 編集 button at the caret
+  await page.getByText('スマホで書いた').tap()
+  await page.getByTestId('tap-edit').tap()
+  await expect(ta).toHaveValue('スマホで書いた')
+  await page.getByTestId('src-done').tap()
+  await expect(page.getByTestId('mode-bar')).toBeHidden()
+  await ctx.close()
 })

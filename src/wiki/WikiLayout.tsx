@@ -80,6 +80,10 @@ export function WikiLayout() {
 
   const slug = wiki?.slug ?? wid!
 
+  // Phone drawer: closes on navigation.
+  const [drawer, setDrawer] = useState(false)
+  useEffect(() => setDrawer(false), [loc.pathname])
+
   // ⌘K / Ctrl+K anywhere in the wiki (capture: the source editor stops key propagation).
   const [quick, setQuick] = useState(false)
   useEffect(() => {
@@ -140,8 +144,19 @@ export function WikiLayout() {
   return (
     <WikiCtx.Provider value={value}>
       <div className="layout">
-        <Sidebar wikis={wikis} outline={outline} />
+        <Sidebar wikis={wikis} outline={outline} open={drawer} />
+        {drawer && <div className="drawer-back" onClick={() => setDrawer(false)} data-testid="drawer-back" />}
         <main className="main">
+          {/* Phones: the sidebar becomes a drawer behind this bar. */}
+          <div className="mobile-bar">
+            <button className="icon-btn" onClick={() => setDrawer(true)} aria-label="メニューを開く" data-testid="open-drawer">
+              ☰
+            </button>
+            <span className="mobile-title">{wiki.name}</span>
+            <button className="icon-btn" onClick={() => setQuick(true)} aria-label="ページを開く" data-testid="mobile-quick">
+              ⌕
+            </button>
+          </div>
           <Outlet />
         </main>
       </div>
@@ -171,7 +186,7 @@ export function WikiLayout() {
   )
 }
 
-function Sidebar({ wikis, outline }: { wikis: WikiSummary[]; outline: OutlineSource | null }) {
+function Sidebar({ wikis, outline, open }: { wikis: WikiSummary[]; outline: OutlineSource | null; open: boolean }) {
   const { wiki, pages, canEdit, openNewPage, openQuick, role } = useWiki()
   const { me, logout } = useSession()
   const nav = useNavigate()
@@ -197,7 +212,7 @@ function Sidebar({ wikis, outline }: { wikis: WikiSummary[]; outline: OutlineSou
   const showOutline = tab === 'outline' && !!outline
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${open ? 'open' : ''}`} data-testid="sidebar">
       <div className="sidebar-top">
         <select
           className="wiki-switch"

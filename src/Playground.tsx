@@ -55,6 +55,7 @@ export function Playground() {
           listMode={listMode}
           softBreak={softBreak}
           handleRef={handle}
+          wikiNames={['開発/API/認証', '開発/設計', 'ホーム', '議事録/2026-11']}
           resolveWiki={(t) => ({ href: `#${t}`, exists: t !== '存在しないページ' })}
           absoluteWiki={(t) => ({ href: `${location.origin}/#${t}`, exists: true })}
           onOpenWiki={(t) => console.log('open wiki', t)}
