@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { HistoryDialog } from './HistoryDialog'
 import { HelpDialog } from './HelpDialog'
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { api, ApiError, pageUrl, type Page, uploadImage } from '../api'
+import { api, ApiError, pageUrl, type Page, type PageSummary, uploadImage } from '../api'
 import { normalizePageName } from '../../shared/pageName'
 import { DocEditor, type DocEditorHandle } from '../editor/DocEditor'
 import { useSession } from '../App'
@@ -210,6 +210,18 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
   const childPages = useMemo(() => pages.filter((p) => p.name.startsWith(page.name + '/')), [pages, page.name])
   const openWiki = useCallback((t: string) => nav(pageUrl(wiki.slug, t)), [nav, wiki.slug])
 
+  // Pages linking here; refreshed when the page list changes (creates, renames, deletes).
+  const [backlinks, setBacklinks] = useState<PageSummary[]>([])
+  useEffect(() => {
+    let live = true
+    api<{ pages: PageSummary[] }>('GET', `/api/wikis/${wiki.id}/pages/${page.id}/backlinks`)
+      .then((r) => live && setBacklinks(r.pages))
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [wiki.id, page.id, pages])
+
   return (
     <div className="page">
       <div className="page-head">
@@ -253,6 +265,18 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
             {childPages.map((c) => (
               <li key={c.id}>
                 <Link to={pageUrl(wiki.slug, c.name)}>{c.name.slice(page.name.length + 1)}</Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {backlinks.length > 0 && (
+        <section className="backlinks" data-testid="backlinks">
+          <h3>このページへのリンク</h3>
+          <ul>
+            {backlinks.map((b) => (
+              <li key={b.id}>
+                <Link to={pageUrl(wiki.slug, b.name)}>{b.name}</Link>
               </li>
             ))}
           </ul>
