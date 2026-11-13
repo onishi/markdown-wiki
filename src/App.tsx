@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { api, ApiError, type Me, type WikiSummary, ROLE_LABEL, wikiUrl } from './api'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug'
 import { Playground } from './Playground'
+import { Help } from './Help'
 import { WikiLayout } from './wiki/WikiLayout'
 import { PageRoute } from './wiki/PageView'
 import { WikiHome } from './wiki/WikiHome'
@@ -20,6 +21,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/playground" element={<Playground />} />
+      <Route path="/help" element={<Help />} />
       <Route path="/login" element={<Login />} />
       <Route path="*" element={<Authed />} />
     </Routes>
@@ -99,7 +101,7 @@ function Login() {
         )}
         <p className="small try-link">
           <a href="/playground">ログインせずにエディタを試す</a>
-          <span className="muted">（保存されません）</span>
+          <span className="muted">（保存されません）</span> · <a href="/help">使い方</a>
         </p>
       </div>
     </div>
@@ -134,7 +136,7 @@ function Home() {
       <header className="home-header">
         <h1>Markdown Wiki</h1>
         <div className="muted">
-          {me.user.email} · <button className="link-btn" onClick={logout}>ログアウト</button>
+          {me.user.email} · <a href="/help">ヘルプ</a> · <button className="link-btn" onClick={logout}>ログアウト</button>
         </div>
       </header>
       <section>

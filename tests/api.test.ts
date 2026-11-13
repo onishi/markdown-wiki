@@ -267,6 +267,43 @@ describe('pages: save conflicts, rename, hierarchy', () => {
   })
 })
 
+describe('search & backlinks', () => {
+  it('finds pages by every term in name or body, with a snippet', async () => {
+    const { app } = setup()
+    const a = await login(app, 'a@example.com')
+    const w = (await a.post('/api/wikis', { name: 'S' })).json.wiki
+    await a.post(`/api/wikis/${w.id}/pages`, { name: '議事録/2026-01', content: '# 定例\n\nデプロイ手順を Cloudflare で確認した。' })
+    await a.post(`/api/wikis/${w.id}/pages`, { name: 'Cloudflare メモ', content: 'Workers の設定' })
+    await a.post(`/api/wikis/${w.id}/pages`, { name: 'other', content: '100% 完了_done' })
+    const q = async (s: string) => (await a.get(`/api/wikis/${w.id}/search?q=${encodeURIComponent(s)}`)).json.results
+    expect((await q('cloudflare')).map((r: any) => r.name).sort()).toEqual(['Cloudflare メモ', '議事録/2026-01'])
+    const both = await q('デプロイ　cloudflare')
+    expect(both.map((r: any) => r.name)).toEqual(['議事録/2026-01'])
+    expect(both[0].snippet).toContain('デプロイ手順')
+    expect((await q('メモ workers'))[0]).toMatchObject({ name: 'Cloudflare メモ', nameMatch: false })
+    // LIKE wildcards are literal
+    expect((await q('%')).map((r: any) => r.name)).toEqual(['other'])
+    expect((await q('_')).map((r: any) => r.name)).toEqual(['other'])
+    expect(await q('  ')).toEqual([])
+    const outsider = await login(app, 'x@example.com')
+    expect((await outsider.get(`/api/wikis/${w.id}/search?q=a`)).status).toBe(404)
+  })
+
+  it('lists pages linking here, by current or old name, ignoring code', async () => {
+    const { app } = setup()
+    const a = await login(app, 'a@example.com')
+    const w = (await a.post('/api/wikis', { name: 'B' })).json.wiki
+    const t = (await a.post(`/api/wikis/${w.id}/pages`, { name: 'Target', content: 'self [[Target]]' })).json.page
+    await a.post(`/api/wikis/${w.id}/pages`, { name: 'p1', content: 'see [[Target|ここ]]' })
+    await a.post(`/api/wikis/${w.id}/pages`, { name: 'p2', content: '`[[Target]]` in code' })
+    await a.post(`/api/wikis/${w.id}/pages`, { name: 'p3', content: '[[target]] differs in case' })
+    await a.post(`/api/wikis/${w.id}/pages/${t.id}/rename`, { name: 'New' })
+    await a.post(`/api/wikis/${w.id}/pages`, { name: 'p4', content: '- [[New]]' })
+    const r = await a.get(`/api/wikis/${w.id}/pages/${t.id}/backlinks`)
+    expect(r.json.pages.map((p: any) => p.name)).toEqual(['p1', 'p4'])
+  })
+})
+
 describe('Google OAuth callback', () => {
   it('logs in with a verified Google identity (token endpoint mocked)', async () => {
     const clientId = 'cid.apps.googleusercontent.com'

@@ -408,3 +408,25 @@ label.check { display: flex; gap: 8px; align-items: center; margin: 10px 0; font
 /* The virtual line below the document's last line. */
 .doc-append.at-end { border-color: color-mix(in srgb, var(--accent) 45%, transparent); border-style: solid; color: var(--fg); background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
 .append-caret { display: inline-block; width: 2px; height: 1.15em; vertical-align: -0.2em; background: var(--accent); animation: blink 1.06s steps(1) infinite; }
+.quick-section { padding: 10px 10px 4px; border-top: 1px solid var(--border); margin-top: 4px; }
+.quick-list button.quick-text { white-space: normal; }
+.quick-text-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quick-snippet { display: block; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0 1px; }
+@media (prefers-color-scheme: dark) { mark { background: #5c4d10; } }
+.backlinks { margin-top: 24px; border-top: 1px solid var(--border); padding-top: 8px; }
+.backlinks h3 { font-size: 13px; color: var(--fg-muted); font-weight: 600; }
+.backlinks ul { padding-left: 1.2em; }
+.help-page { max-width: 820px; margin: 0 auto; padding: 24px 16px 80px; line-height: 1.75; }
+.help-page-head { display: flex; gap: 6px; font-size: 14px; margin-bottom: 24px; }
+.help-page h1 { font-size: 28px; margin: 0 0 8px; }
+.help-page .lead { color: var(--fg-muted); margin-top: 0; }
+.help-page h2 { font-size: 20px; margin: 40px 0 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border); scroll-margin-top: 16px; }
+.help-page section { scroll-margin-top: 16px; }
+.help-page li { margin: 4px 0; }
+.help-toc { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+.help-syntax, .help-roles { border-collapse: collapse; width: 100%; font-size: 14px; }
+.help-syntax th, .help-syntax td, .help-roles th, .help-roles td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
+.help-syntax pre { margin: 0; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+.help-roles th { white-space: nowrap; width: 6em; }
+.help-page .help { max-height: none; overflow: visible; }

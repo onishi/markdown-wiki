@@ -172,6 +172,7 @@ export function WikiLayout() {
       )}
       {quick && (
         <QuickOpen
+          wikiId={wiki.id}
           pages={pages}
           canEdit={value.canEdit}
           onClose={() => setQuick(false)}
@@ -267,6 +268,9 @@ function Sidebar({ wikis, outline, open }: { wikis: WikiSummary[]; outline: Outl
         <NavLink to={`/w/${wiki.slug}/settings`} className="side-link">
           共有設定・メンバー
         </NavLink>
+        <a href="/help" target="_blank" rel="noopener" className="side-link" data-testid="help-link">
+          ヘルプ
+        </a>
         <UserMenu email={me.user.email} onLogout={logout} />
       </div>
     </aside>

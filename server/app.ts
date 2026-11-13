@@ -14,9 +14,10 @@ import {
   sessionUser,
   upsertGoogleUser,
 } from './auth.js'
-import { validatePageName } from '../shared/pageName.js'
+import { normalizePageName, validatePageName } from '../shared/pageName.js'
+import { matchesAll, searchTerms, snippet } from '../shared/search.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
-import { rewriteWikiLinks } from '../shared/markdown/wikilinks.js'
+import { extractWikiTargets, rewriteWikiLinks } from '../shared/markdown/wikilinks.js'
 
 export type Role = 'owner' | 'editor' | 'viewer'
 const RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 }
@@ -381,6 +382,47 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (alias) return c.json({ page: pageRow(wikiId, alias.page_id), via: 'alias' })
     const children = db.prepare(`SELECT id, name FROM pages WHERE wiki_id = ? AND ${UNDER} ORDER BY name`).all(wikiId, `${name}/`, `${name}/`)
     return c.json({ page: null, name, children }, 404)
+  })
+
+  /** Full-text search over page names and bodies: every term must match (AND). */
+  app.get('/api/wikis/:wid/search', (c) => {
+    const { wikiId } = need(c, 'viewer')
+    const terms = searchTerms(c.req.query('q') ?? '')
+    if (terms.length === 0) return c.json({ results: [], more: false })
+    const like = (t: string) => `%${t.replace(/[\\%_]/g, (m) => '\\' + m)}%`
+    // LIKE narrows (ASCII case-insensitive); matchesAll confirms with the same rule.
+    const where = terms.map(() => "(name LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')").join(' AND ')
+    const rows = db
+      .prepare(`SELECT id, name, content, updated_at AS updatedAt FROM pages WHERE wiki_id = ? AND ${where} ORDER BY updated_at DESC LIMIT 101`)
+      .all(wikiId, ...terms.flatMap((t) => [like(t), like(t)])) as { id: string; name: string; content: string; updatedAt: number }[]
+    const hits = rows.filter((r) => matchesAll(r.name, r.content, terms))
+    const results = hits.slice(0, 100).map((r) => ({
+      id: r.id,
+      name: r.name,
+      updatedAt: r.updatedAt,
+      nameMatch: terms.every((t) => r.name.toLowerCase().includes(t)),
+      snippet: snippet(r.content, terms),
+    }))
+    return c.json({ results, more: rows.length > 100 })
+  })
+
+  /** Pages whose [[links]] point at this page (by its name or one of its old names). */
+  app.get('/api/wikis/:wid/pages/:pid/backlinks', (c) => {
+    const { wikiId } = need(c, 'viewer')
+    const pid = c.req.param('pid')
+    const page = db.prepare('SELECT name FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, pid) as { name: string } | undefined
+    if (!page) return c.json({ error: 'not_found' }, 404)
+    const aliases = (db.prepare('SELECT name FROM page_aliases WHERE wiki_id = ? AND page_id = ?').all(wikiId, pid) as { name: string }[]).map((a) => a.name)
+    const names = new Set([page.name, ...aliases])
+    const rows = db
+      .prepare("SELECT id, name, content, updated_at AS updatedAt FROM pages WHERE wiki_id = ? AND id != ? AND instr(content, '[[') > 0")
+      .all(wikiId, pid) as { id: string; name: string; content: string; updatedAt: number }[]
+    const pages = rows
+      .filter((r) => [...names].some((n) => r.content.includes(n.split('/').pop()!)))
+      .filter((r) => extractWikiTargets(r.content).some((t) => names.has(normalizePageName(t))))
+      .map((r) => ({ id: r.id, name: r.name, updatedAt: r.updatedAt }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ja'))
+    return c.json({ pages })
   })
 
   app.get('/api/wikis/:wid/pages/:pid', (c) => {

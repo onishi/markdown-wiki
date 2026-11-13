@@ -4,7 +4,7 @@ const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigat
 const M = isMac ? '⌘' : 'Ctrl'
 const A = isMac ? '⌥' : 'Alt'
 
-const GROUPS: { title: string; rows: [keys: string[], what: string][] }[] = [
+export const GROUPS: { title: string; rows: [keys: string[], what: string][] }[] = [
   {
     title: '表示中',
     rows: [
@@ -39,7 +39,7 @@ const GROUPS: { title: string; rows: [keys: string[], what: string][] }[] = [
       [['クリック'], 'リンクを開く'],
       [[`${M}+クリック`], '新しいタブで開く'],
       [[`${A}+クリック`], 'リンクの文字の中にカーソルを置く'],
-      [[`${M}+K`], 'ページを素早く開く・作成'],
+      [[`${M}+K`], 'ページを開く・本文を検索・作成'],
       [['?'], 'この一覧'],
     ],
   },
@@ -68,6 +68,9 @@ export function HelpDialog({ onClose }: { onClose: () => void }) {
         ))}
       </div>
       <div className="modal-actions">
+        <a className="btn" href="/help" target="_blank" rel="noopener">
+          詳しい使い方
+        </a>
         <button className="btn" onClick={onClose}>
           閉じる
         </button>

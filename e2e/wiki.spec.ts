@@ -412,6 +412,45 @@ test('quick open: Cmd/Ctrl+K finds pages by part of the name and can create one'
   await page.context().close()
 })
 
+test('full-text search in ⌘K, backlinks, help page', async ({ browser }) => {
+  const page = await login(browser, uniq('search'))
+  await createWiki(page, 'Search wiki')
+  await newPage(page, '手順')
+  await writeBody(page, 'デプロイは Cloudflare Workers に出す。')
+  await saved(page)
+  await newPage(page, '索引')
+  await writeBody(page, '- [[手順]] を見る')
+  await saved(page)
+
+  await page.keyboard.press('ControlOrMeta+k')
+  const input = page.getByTestId('quick-open-input')
+  await input.fill('workers デプロイ')
+  const hit = page.getByTestId('quick-text-hit')
+  await expect(hit).toHaveCount(1)
+  await expect(hit).toContainText('手順')
+  await expect(hit.locator('mark')).toHaveText(['デプロイ', 'Workers'])
+  await expect(page.locator('.quick-section')).toHaveText('本文に含むページ')
+  await page.keyboard.press('Enter') // first item: the only (body) hit
+  await expect(page.locator('.page-title')).toHaveText('手順')
+
+  await expect(page.getByTestId('backlinks')).toContainText('索引')
+  await page.getByTestId('backlinks').getByRole('link', { name: '索引' }).click()
+  await expect(page.locator('.page-title')).toHaveText('索引')
+  await expect(page.getByTestId('backlinks')).toHaveCount(0)
+
+  // help page opens in a new tab from the sidebar
+  const [help] = await Promise.all([page.context().waitForEvent('page'), page.getByTestId('help-link').click()])
+  await expect(help.getByTestId('help-page')).toContainText('本文の全文検索')
+  await expect(help.getByTestId('help-page')).toContainText('直前の編集を取り消す')
+  await page.context().close()
+})
+
+test('help page is readable without logging in', async ({ page }) => {
+  await page.goto('/help#links')
+  await expect(page.getByRole('heading', { name: 'Markdown Wiki の使い方' })).toBeVisible()
+  await expect(page.locator('#links')).toBeInViewport()
+})
+
 test('page header: … menu, ? shortcut list', async ({ browser }) => {
   const page = await login(browser, uniq('ui'))
   await createWiki(page, 'UI wiki')
