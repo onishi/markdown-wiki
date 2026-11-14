@@ -438,11 +438,24 @@ mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0 1px; 
 .help-page .help { max-height: none; overflow: visible; }
 .check-row { display: flex; gap: 8px; align-items: center; font-size: 14px; }
 .ai-dialog { display: flex; flex-direction: column; gap: 10px; }
-.ai-scope { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 14px; }
-.ai-scope label { display: inline-flex; gap: 4px; align-items: center; }
-.ai-presets { display: flex; flex-wrap: wrap; gap: 6px; }
-.ai-volume { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.ai-volume > .muted { margin-right: 2px; }
+.ai-form { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 14px 14px; align-items: start; }
+.ai-label { font-size: 13px; font-weight: 600; color: var(--fg-muted); padding-top: 6px; }
+.ai-hint { font-size: 12.5px; color: var(--fg-muted); margin-top: 6px; }
+.ai-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ai-group + .ai-group { margin-top: 6px; }
+.ai-group-name { font-size: 12px; color: var(--fg-muted); width: 88px; flex: none; }
+.ai-privacy { font-size: 12px; color: var(--fg-muted); margin: 4px 0 0; padding-top: 10px; border-top: 1px solid var(--border); }
+.seg { display: inline-flex; flex-wrap: wrap; gap: 2px; background: var(--border); padding: 2px; border-radius: 7px; }
+.seg button { border: 0; background: none; color: var(--fg-muted); padding: 4px 14px; border-radius: 5px; cursor: pointer; font: inherit; font-size: 13px; }
+.seg button:disabled { cursor: default; opacity: .5; }
+.seg button.on { background: var(--bg); color: var(--fg); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.seg.off { opacity: .6; }
+.seg-sub { margin-left: 6px; font-size: 11.5px; color: var(--fg-muted); }
+@media (max-width: 520px) {
+  .ai-form { grid-template-columns: 1fr; gap: 6px; }
+  .ai-label { padding-top: 8px; }
+  .ai-group-name { width: 100%; }
+}
 .chip { border: 1px solid var(--border); background: none; color: var(--fg); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; }
 .chip:hover { border-color: var(--accent); }
 .chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }

@@ -4,16 +4,32 @@ import { applyHunks, charDiff, diffHunks, type Hunk, type Segment } from '../../
 import { Modal } from './Modal'
 import { isImeKey } from '../editor/SourceEditor'
 
-const PRESETS: { key: string; label: string }[] = [
-  { key: 'auto', label: 'お任せで改善' },
-  { key: 'typo', label: '誤字脱字だけ' },
-  { key: 'clarify', label: '読みやすく' },
-  { key: 'trim', label: '簡潔に' },
-  { key: 'expand', label: '項目を増やす' },
-  { key: 'tbd', label: '(TBD) を埋める' },
-  { key: 'table', label: '表に整理' },
-  { key: 'summary', label: '冒頭に要約' },
+const PRESET_GROUPS: { name: string; items: { key: string; label: string; hint: string }[] }[] = [
+  {
+    name: '直す',
+    items: [
+      { key: 'auto', label: 'お任せで改善', hint: '誤字脱字、わかりにくい表現、見出しや箇条書きの構成をまとめて直します。' },
+      { key: 'typo', label: '誤字脱字だけ', hint: '誤字脱字・表記ゆれ・文法の誤りだけを直します。表現や構成は変えません。' },
+      { key: 'factcheck', label: '誤情報の訂正', hint: '事実・数値・日付・名前などの誤りや古い情報を Google 検索で確かめて正します。' },
+      { key: 'clarify', label: '読みやすく', hint: '長い文を分け、順序や見出し・箇条書きを整理します。情報は減らしません。' },
+      { key: 'trim', label: '簡潔に', hint: '重複や冗長な言い回しを削ります。' },
+    ],
+  },
+  {
+    name: '足す・まとめる',
+    items: [
+      { key: 'expand', label: '項目を増やす', hint: '足りない観点を見出しや項目として足します。' },
+      { key: 'tbd', label: '(TBD) を埋める', hint: '「(TBD)」「TODO」など書きかけの箇所を埋めます。' },
+      { key: 'summary', label: '冒頭に要約', hint: '冒頭に 2〜4 行の要約を足します。' },
+      { key: 'table', label: '表に整理', hint: '列挙されている情報を表にまとめます。' },
+    ],
+  },
 ]
+const PRESETS = PRESET_GROUPS.flatMap((g) => g.items)
+/** Tasks that always look things up (the server forces web mode too). */
+const NEEDS_WEB = new Set(['factcheck'])
+/** Tasks where a target length means nothing. */
+const NO_VOLUME = new Set(['typo', 'factcheck'])
 
 const VOLUMES: { key: string; label: string }[] = [
   { key: 'auto', label: 'おまかせ' },
@@ -79,6 +95,8 @@ export function AiDialog({
   const compEnd = useRef(-1e9)
   const reqId = useRef(0)
 
+  const useWeb = web || NEEDS_WEB.has(preset)
+  const volumeOff = NO_VOLUME.has(preset)
   const range = scope === 'selection' && selection ? selection : { start: 0, end: content.length }
   const target = content.slice(range.start, range.end)
 
@@ -91,13 +109,12 @@ export function AiDialog({
         start: range.start,
         end: range.end,
         preset,
-        volume,
+        volume: volumeOff ? 'auto' : volume,
         instruction,
-        web,
+        web: useWeb,
       })
       if (id !== reqId.current) return
-      // Sources become one more hunk at the end, so they can be adopted or left out.
-      const segments = diffHunks(target, withSources(target, r.revised, r.sources ?? []))
+      const segments = reviewSegments(target, r.revised, r.sources ?? [])
       setAccepted(new Set(segments.flatMap((s) => ('id' in s ? [s.id] : []))))
       setPhase({ kind: 'review', segments, summary: r.summary, remaining: r.remaining })
     } catch (e) {
@@ -126,56 +143,82 @@ export function AiDialog({
       <div className="ai-dialog" data-testid="ai-dialog">
         {(phase.kind === 'ask' || phase.kind === 'error' || phase.kind === 'loading') && (
           <>
-            <div className="ai-scope" role="radiogroup" aria-label="対象">
-              <label>
-                <input type="radio" checked={scope === 'selection'} disabled={!selection} onChange={() => setScope('selection')} />
-                {selection?.editing ? '編集中の部分' : '選択した部分'}
-                {selection && <span className="muted small">（{content.slice(selection.start, selection.end).split('\n').length} 行）</span>}
-              </label>
-              <label>
-                <input type="radio" checked={scope === 'page'} onChange={() => setScope('page')} />
-                ページ全体
-              </label>
-              {!selection && <span className="muted small">範囲を選んでから開くと、その部分だけを対象にできます</span>}
+            <div className="ai-form">
+              <div className="ai-label">対象</div>
+              <div>
+                <div className="seg" role="radiogroup" aria-label="対象">
+                  <button type="button" role="radio" aria-checked={scope === 'selection'} className={scope === 'selection' ? 'on' : ''} disabled={!selection} onClick={() => setScope('selection')}>
+                    {selection?.editing ? '編集中の部分' : '選択した部分'}
+                    {selection && <span className="seg-sub">{content.slice(selection.start, selection.end).split('\n').length} 行</span>}
+                  </button>
+                  <button type="button" role="radio" aria-checked={scope === 'page'} className={scope === 'page' ? 'on' : ''} onClick={() => setScope('page')}>
+                    ページ全体
+                  </button>
+                </div>
+                {!selection && <div className="ai-hint">範囲を選んでから開くと、その部分だけを対象にできます。</div>}
+              </div>
+
+              <div className="ai-label">やること</div>
+              <div>
+                {PRESET_GROUPS.map((g) => (
+                  <div key={g.name} className="ai-group" role="radiogroup" aria-label={g.name}>
+                    <span className="ai-group-name">{g.name}</span>
+                    {g.items.map((p) => (
+                      <button key={p.key} type="button" role="radio" aria-checked={preset === p.key} className={'chip' + (preset === p.key ? ' on' : '')} onClick={() => setPreset(p.key)}>
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                ))}
+                <div className="ai-hint" data-testid="ai-preset-hint">
+                  {PRESETS.find((p) => p.key === preset)?.hint}
+                </div>
+              </div>
+
+              <div className="ai-label">分量</div>
+              <div>
+                <div className={'seg' + (volumeOff ? ' off' : '')} role="radiogroup" aria-label="分量">
+                  {VOLUMES.map((v) => (
+                    <button key={v.key} type="button" role="radio" aria-checked={!volumeOff && volume === v.key} className={!volumeOff && volume === v.key ? 'on' : ''} disabled={volumeOff} onClick={() => setVolume(v.key)}>
+                      {v.label}
+                    </button>
+                  ))}
+                </div>
+                {volumeOff && <div className="ai-hint">この作業では分量は変わりません。</div>}
+              </div>
+
+              <div className="ai-label">調べる</div>
+              <div>
+                <label className="check-row">
+                  <input type="checkbox" checked={useWeb} disabled={NEEDS_WEB.has(preset)} onChange={(e) => toggleWeb(e.target.checked)} data-testid="ai-web" />
+                  Web で調べる
+                </label>
+                <div className="ai-hint">
+                  {NEEDS_WEB.has(preset) ? '誤情報の訂正では、常に Google 検索で確かめます。' : 'Google 検索で確認できた事実だけを足し、出典を付けます。'}
+                </div>
+              </div>
+
+              <div className="ai-label">指示</div>
+              <textarea
+                className="input-block ai-instruction"
+                rows={2}
+                placeholder="追加の指示（任意）例: 箇条書きにして、敬体にそろえて"
+                value={instruction}
+                data-testid="ai-instruction"
+                onChange={(e) => setInstruction(e.target.value)}
+                onCompositionEnd={() => (compEnd.current = performance.now())}
+                onKeyDown={(e) => {
+                  if (isImeKey(e, compEnd.current)) return
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault()
+                    if (phase.kind !== 'loading') void run()
+                  }
+                }}
+              />
             </div>
-            <div className="ai-presets" role="radiogroup" aria-label="やること">
-              {PRESETS.map((p) => (
-                <button key={p.key} type="button" role="radio" aria-checked={preset === p.key} className={'chip' + (preset === p.key ? ' on' : '')} onClick={() => setPreset(p.key)}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
-            <div className="ai-volume" role="radiogroup" aria-label="分量">
-              <span className="muted small">分量</span>
-              {VOLUMES.map((v) => (
-                <button key={v.key} type="button" role="radio" aria-checked={volume === v.key} className={'chip' + (volume === v.key ? ' on' : '')} onClick={() => setVolume(v.key)}>
-                  {v.label}
-                </button>
-              ))}
-            </div>
-            <textarea
-              className="input-block ai-instruction"
-              rows={2}
-              placeholder="追加の指示（任意）例: 箇条書きにして、敬体にそろえて"
-              value={instruction}
-              data-testid="ai-instruction"
-              onChange={(e) => setInstruction(e.target.value)}
-              onCompositionEnd={() => (compEnd.current = performance.now())}
-              onKeyDown={(e) => {
-                if (isImeKey(e, compEnd.current)) return
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault()
-                  if (phase.kind !== 'loading') void run()
-                }
-              }}
-            />
-            <label className="check-row">
-              <input type="checkbox" checked={web} onChange={(e) => toggleWeb(e.target.checked)} data-testid="ai-web" />
-              Web で調べる（Google 検索で確認できた事実を足し、出典を付けます）
-            </label>
             {phase.kind === 'error' && <div className="notice">{phase.message}</div>}
-            <p className="muted small">
-              選んだ部分（とページ全体の文脈）が Google の Gemini に送られます{web && '。Web で調べるときは、ページの内容をもとに Google 検索も行われます'}。提案は保存されず、採用した変更だけが通常の編集として保存されます。
+            <p className="ai-privacy">
+              対象（とページ全体の文脈）が Google の Gemini に送られます{useWeb && '。ページの内容をもとに Google 検索も行われます'}。提案は保存されず、採用した変更だけが通常の編集として保存されます。
             </p>
             <div className="modal-actions">
               <button className="btn" onClick={onClose}>
@@ -233,6 +276,24 @@ export function withSources(target: string, revised: string, sources: { uri: str
   const label = (s: { uri: string; title?: string }) => (s.title || new URL(s.uri).hostname).replace(/[[\]]/g, '')
   const list = sources.map((s) => `- [${label(s)}](${s.uri.replace(/[()\s]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'))})`).join('\n')
   return revised.replace(/\n*$/, '') + '\n\n出典:\n\n' + list + trail
+}
+
+/**
+ * Diff for review.  Sources (web mode) are split off into a hunk of their own at the
+ * end, so they can be adopted or left out separately from the last edit.
+ */
+export function reviewSegments(target: string, revised: string, sources: { uri: string; title?: string }[]): Segment[] {
+  const full = withSources(target, revised, sources)
+  const trail = (t: string) => /\n*$/.exec(t)![0]
+  if (full === revised || trail(target) !== trail(revised)) return diffHunks(target, full)
+  // Diff the bodies without their trailing newlines, then: sources hunk, trailing newlines.
+  const k = trail(target).length
+  const segments = diffHunks(target.slice(0, target.length - k), revised.slice(0, revised.length - k))
+  const id = Math.max(-1, ...segments.flatMap((s) => ('id' in s ? [s.id] : []))) + 1
+  const body = revised.length - k
+  segments.push({ id, del: [], add: full.slice(body, full.length - k).split('\n').slice(1) }) // "\n\n出典:…" → ['', '出典:', '', '- …']
+  if (k) segments.push({ same: new Array<string>(k).fill('') })
+  return segments
 }
 
 /** Unchanged lines (collapsed) and each hunk with a checkbox; changed characters highlighted. */

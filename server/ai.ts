@@ -12,6 +12,8 @@ const MODEL = 'gemini-2.5-flash'
 export const AI_PRESETS = {
   auto: 'お任せで改善: 誤字脱字、わかりにくい表現、見出しや箇条書きの構成を直す。',
   typo: '誤字脱字・表記ゆれ・文法の誤りだけを直す。表現や構成は変えない。',
+  factcheck:
+    '誤情報の訂正: 事実・数値・日付・固有名詞・用語の誤りや古くなった情報を Google 検索で確認し、正しい内容に直す。検索で誤りと確認できない箇所は変えない。表現や構成は変えない。summary には直した箇所を「誤 → 正」の形で挙げる（誤りがなければそう書く）。',
   clarify: '読みやすくする: 長い文を分け、順序や見出し・箇条書きを整理する。情報は減らさない。',
   trim: '簡潔にする: 重複や冗長な言い回しを削る。必要な情報は残す。',
   expand: '項目を増やす: 足りない観点を見出しや箇条として追加する。内容が本文から分からない項目は「(TBD)」とだけ書く。',
@@ -21,6 +23,8 @@ export const AI_PRESETS = {
 } as const
 export type AiPreset = keyof typeof AI_PRESETS
 export const isAiPreset = (p: unknown): p is AiPreset => typeof p === 'string' && p in AI_PRESETS
+/** Tasks that only make sense with Google Search (web mode is forced on). */
+export const AI_NEEDS_WEB: ReadonlySet<AiPreset> = new Set(['factcheck'])
 
 /** How long the result should be compared with the target ("auto": whatever the task needs). */
 export const AI_VOLUMES = {

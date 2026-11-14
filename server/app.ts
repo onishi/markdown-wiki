@@ -16,7 +16,7 @@ import {
 } from './auth.js'
 import { normalizePageName, validatePageName } from '../shared/pageName.js'
 import { matchesAll, searchTerms, snippet } from '../shared/search.js'
-import { isAiPreset, isAiVolume, type Reviser } from './ai.js'
+import { AI_NEEDS_WEB, isAiPreset, isAiVolume, type Reviser } from './ai.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
 import { extractWikiTargets, rewriteWikiLinks } from '../shared/markdown/wikilinks.js'
 
@@ -551,7 +551,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     const target = content.slice(start, end)
     let r
     try {
-      r = await cfg.ai({ wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: b.web === true })
+      r = await cfg.ai({ wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: b.web === true || AI_NEEDS_WEB.has(preset) })
     } catch (e) {
       console.error('ai revise failed', e)
       return c.json({ error: 'ai_failed' }, 502)

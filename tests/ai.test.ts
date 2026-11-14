@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { applyHunks, charDiff, diffHunks } from '../shared/diff'
 import { buildPrompt, parseTagged } from '../server/ai'
-import { withSources } from '../src/wiki/AiDialog'
+import { reviewSegments, withSources } from '../src/wiki/AiDialog'
 import { openDb } from '../server/db-node'
 import { createApp } from '../server/app'
 import type { Reviser, ReviseRequest } from '../server/ai'
@@ -56,6 +56,19 @@ describe('web mode', () => {
     expect(withSources('a\n', 'a\n', src)).toBe('a\n')
     expect(withSources('a\n', 'b\n', [])).toBe('b\n')
     expect(withSources('a\n', 'b\n', src)).toBe('b\n\n出典:\n\n- [E x](https://e.com/a%20%28b%29)\n- [f.org](https://f.org/)\n')
+  })
+})
+
+describe('review segments', () => {
+  it('puts the sources in a hunk of their own', () => {
+    const target = 'teh first\n\nsecond\n'
+    const revised = 'the first\n\nsecond\n\n（追記）\n'
+    const segs = reviewSegments(target, revised, [{ uri: 'https://e.com/', title: 'E' }])
+    const hunks = segs.filter((s) => 'id' in s) as { id: number; add: string[] }[]
+    expect(hunks.map((h) => h.add)).toEqual([['the first'], ['', '（追記）'], ['', '出典:', '', '- [E](https://e.com/)']])
+    expect(applyHunks(segs, new Set([0, 1]))).toBe(revised)
+    expect(applyHunks(segs, new Set([2]))).toBe('teh first\n\nsecond\n\n出典:\n\n- [E](https://e.com/)\n')
+    expect(applyHunks(segs, new Set([0, 1, 2]))).toBe(withSources(target, revised, [{ uri: 'https://e.com/', title: 'E' }]))
   })
 })
 

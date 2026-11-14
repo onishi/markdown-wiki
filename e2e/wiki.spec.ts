@@ -532,6 +532,19 @@ test('AI suggestions: owner opts in, review the diff, adopt some changes, undo',
   await page.getByTestId('ai-apply').click()
   await expect(page.getByTestId('doc').getByRole('link', { name: 'example.com' })).toHaveAttribute('href', 'https://example.com/source')
   await saved(page)
+
+  // 誤情報の訂正: always looks things up; the length does not apply
+  await page.getByTestId('ai-button').click()
+  await page.getByTestId('ai-web').uncheck()
+  await page.getByRole('radio', { name: '誤情報の訂正' }).click()
+  await expect(page.getByTestId('ai-web')).toBeChecked()
+  await expect(page.getByTestId('ai-web')).toBeDisabled()
+  await expect(page.getByRole('radio', { name: '長く' })).toBeDisabled()
+  await expect(page.getByTestId('ai-preset-hint')).toContainText('Google 検索で確かめて')
+  await page.getByTestId('ai-run').click()
+  await expect(page.getByTestId('ai-summary')).toHaveText('テスト用の提案（factcheck, web）')
+  await expect(page.getByTestId('ai-hunk').last()).toHaveText(/^\s*出典:\s*- \[example\.com\]/) // sources: a hunk of their own
+  await page.getByRole('button', { name: '採用しない' }).click()
   await page.context().close()
 })
 
