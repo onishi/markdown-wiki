@@ -34,6 +34,14 @@ describe('prompt', () => {
     const whole = buildPrompt({ wikiName: 'W', pageName: 'P', page, start: 0, end: page.length, preset: 'auto', instruction: '' })
     expect(whole).not.toContain('<page>')
     expect(whole).not.toContain('追加の指示')
+    expect(whole).not.toContain('分量')
+    const short = buildPrompt({ wikiName: 'W', pageName: 'P', page, start: 0, end: page.length, preset: 'auto', volume: 'short', instruction: '' })
+    expect(short).toContain('分量: 対象のおよそ半分')
+    expect(whole).toContain('- ページタイトル: P\n')
+    expect(whole).not.toContain('- 階層')
+    const deep = buildPrompt({ wikiName: 'W', pageName: '開発/API/認証', page, start: 0, end: page.length, preset: 'auto', instruction: '' })
+    expect(deep).toContain('- 階層: 「開発」 > 「API」 > 「認証」（「開発/API」の下にある「認証」のページ）')
+    expect(deep).toContain('主題は「認証」')
   })
 })
 
@@ -68,12 +76,13 @@ describe('AI revise API', () => {
     await owner('PATCH', `/api/wikis/${w.id}`, { aiEnabled: true })
     expect((await owner('GET', `/api/wikis/${w.id}`)).json.wiki.aiEnabled).toBe(true)
     // unsaved text from the client is what gets revised; trailing newlines follow the target
-    const r = await owner('POST', url, { content: 'abc\n\nxyz', start: 5, end: 8, preset: 'typo', instruction: 'x' })
+    const r = await owner('POST', url, { content: 'abc\n\nxyz', start: 5, end: 8, preset: 'typo', volume: 'auto', instruction: 'x' })
     expect(r.json).toMatchObject({ revised: 'XYZ', summary: '大文字に' })
-    expect(seen[0]).toMatchObject({ wikiName: 'W', pageName: 'P', start: 5, end: 8, preset: 'typo', instruction: 'x' })
+    expect(seen[0]).toMatchObject({ wikiName: 'W', pageName: 'P', start: 5, end: 8, preset: 'typo', volume: 'auto', instruction: 'x' })
 
     expect((await owner('POST', url, { content: 'abc', start: 2, end: 9 })).status).toBe(400)
     expect((await owner('POST', url, { content: 'abc', preset: 'nope' })).status).toBe(400)
+    expect((await owner('POST', url, { content: 'abc', volume: 'huge' })).json).toEqual({ error: 'invalid_volume' })
 
     await owner('POST', `/api/wikis/${w.id}/invitations`, { email: 'v@example.com', role: 'viewer' })
     const viewer = await login('v@example.com')

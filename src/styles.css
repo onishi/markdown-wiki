@@ -435,6 +435,8 @@ mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0 1px; 
 .ai-scope { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 14px; }
 .ai-scope label { display: inline-flex; gap: 4px; align-items: center; }
 .ai-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-volume { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ai-volume > .muted { margin-right: 2px; }
 .chip { border: 1px solid var(--border); background: none; color: var(--fg); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; }
 .chip:hover { border-color: var(--accent); }
 .chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }

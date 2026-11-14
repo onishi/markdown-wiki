@@ -16,7 +16,7 @@ import {
 } from './auth.js'
 import { normalizePageName, validatePageName } from '../shared/pageName.js'
 import { matchesAll, searchTerms, snippet } from '../shared/search.js'
-import { isAiPreset, type Reviser } from './ai.js'
+import { isAiPreset, isAiVolume, type Reviser } from './ai.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
 import { extractWikiTargets, rewriteWikiLinks } from '../shared/markdown/wikilinks.js'
 
@@ -528,7 +528,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (!w.ai_enabled) return c.json({ error: 'ai_disabled' }, 403)
     const page = db.prepare('SELECT name FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, c.req.param('pid')) as { name: string } | undefined
     if (!page) return c.json({ error: 'not_found' }, 404)
-    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; instruction?: string }>(c)
+    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; volume?: string; instruction?: string }>(c)
     const content = b.content
     if (typeof content !== 'string' || content.length > MAX_CONTENT) return c.json({ error: 'invalid' }, 400)
     const start = b.start ?? 0
@@ -537,6 +537,8 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (end - start > AI_MAX_TARGET) return c.json({ error: 'too_large' }, 413)
     const preset = b.preset ?? 'auto'
     if (!isAiPreset(preset)) return c.json({ error: 'invalid_preset' }, 400)
+    const volume = b.volume ?? 'auto'
+    if (!isAiVolume(volume)) return c.json({ error: 'invalid_volume' }, 400)
     const instruction = typeof b.instruction === 'string' ? b.instruction.slice(0, 2000) : ''
 
     const uid = c.get('user').id
@@ -549,7 +551,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     const target = content.slice(start, end)
     let r
     try {
-      r = await cfg.ai({ wikiName: w.name, pageName: page.name, page: content, start, end, preset, instruction })
+      r = await cfg.ai({ wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction })
     } catch (e) {
       console.error('ai revise failed', e)
       return c.json({ error: 'ai_failed' }, 502)

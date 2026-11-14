@@ -22,6 +22,16 @@ export const AI_PRESETS = {
 export type AiPreset = keyof typeof AI_PRESETS
 export const isAiPreset = (p: unknown): p is AiPreset => typeof p === 'string' && p in AI_PRESETS
 
+/** How long the result should be compared with the target ("auto": whatever the task needs). */
+export const AI_VOLUMES = {
+  auto: '',
+  short: '分量: 対象のおよそ半分を目安に短くする。要点は残す。',
+  same: '分量: 対象とほぼ同じ長さに保つ。',
+  long: '分量: 対象の 1.5〜2 倍まで（それ以上にはしない）。足してよいのは、本文にすでにある内容の説明・理由・つながり・順序だけ。一般論の解説や、本文にない手順・コマンド・バージョン・URL・例は足さない。',
+} as const
+export type AiVolume = keyof typeof AI_VOLUMES
+export const isAiVolume = (v: unknown): v is AiVolume => typeof v === 'string' && v in AI_VOLUMES
+
 export interface ReviseRequest {
   wikiName: string
   pageName: string
@@ -31,6 +41,8 @@ export interface ReviseRequest {
   start: number
   end: number
   preset: AiPreset
+  /** Target length (default "auto"). */
+  volume?: AiVolume
   instruction: string
 }
 export interface ReviseResult {
@@ -47,14 +59,30 @@ const SYSTEM = `あなたはチームで使う Markdown wiki の編集を手伝�
 - 指示に関係しない箇所は一字一句変えないでください。好みで言い回しを変えないでください。
 - 本文に書かれていない事実・数値・固有名詞を作らないでください。推測で補わないでください。
 - 文体（です・ます／である）、用語、表記は元の文章に合わせてください。
+- 本文にない URL、[[リンク]]、コマンド、設定値を新しく作らないでください。
 - Markdown の構造を保ってください。[[ページ名]] や [[ページ名|表示名]] の wiki リンク、URL、画像、コードブロックの中身は変えないでください。
 - summary には、何をどう変えたかを日本語 1〜2 文で書いてください。変更が不要なら revised に対象をそのまま入れ、summary にその旨を書いてください。`
+
+/** What the page is about: its title is the subject, and `/` in it is the hierarchy. */
+export function pageInfo(wikiName: string, pageName: string): string {
+  const parts = pageName.split('/').filter(Boolean)
+  const leaf = parts[parts.length - 1] ?? pageName
+  const lines = [`【ページ情報】`, `- wiki: ${wikiName}`, `- ページタイトル: ${pageName}`]
+  if (parts.length > 1) lines.push(`- 階層: ${parts.map((p) => `「${p}」`).join(' > ')}（「${parts.slice(0, -1).join('/')}」の下にある「${leaf}」のページ）`)
+  lines.push(
+    `- このページの主題は「${leaf}」です。何を書くべきか・何が足りないか・どこまでが関係する内容かは、タイトル（と階層）を手がかりに判断してください。`,
+    `- タイトルは画面に別に表示されるので、本文の先頭にタイトルの見出しを足す必要はありません。`,
+  )
+  return lines.join('\n')
+}
 
 export function buildPrompt(r: ReviseRequest): string {
   const whole = r.start === 0 && r.end === r.page.length
   const target = r.page.slice(r.start, r.end)
-  const task = [AI_PRESETS[r.preset], r.instruction.trim() && `追加の指示: ${r.instruction.trim()}`].filter(Boolean).join('\n')
-  return `wiki「${r.wikiName}」のページ「${r.pageName}」を編集します。
+  const task = [AI_PRESETS[r.preset], AI_VOLUMES[r.volume ?? 'auto'], r.instruction.trim() && `追加の指示: ${r.instruction.trim()}`]
+    .filter(Boolean)
+    .join('\n')
+  return `${pageInfo(r.wikiName, r.pageName)}
 
 【指示】
 ${task}
@@ -115,5 +143,5 @@ export function geminiReviser(apiKey: string): Reviser {
  */
 export const fakeReviser: Reviser = async (r) => {
   const target = r.page.slice(r.start, r.end)
-  return { revised: target.replace(/teh/g, 'the') + '\n\n（AI 追記）', summary: `テスト用の提案（${r.preset}）` }
+  return { revised: target.replace(/teh/g, 'the') + '\n\n（AI 追記）', summary: `テスト用の提案（${r.preset}${r.volume && r.volume !== 'auto' ? ', ' + r.volume : ''}）` }
 }
