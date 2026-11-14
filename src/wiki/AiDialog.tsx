@@ -61,6 +61,19 @@ export function AiDialog({
   const [preset, setPreset] = useState('auto')
   const [volume, setVolume] = useState('auto')
   const [instruction, setInstruction] = useState('')
+  const [web, setWeb] = useState(() => {
+    try {
+      return localStorage.getItem('mw:aiWeb') !== '0'
+    } catch {
+      return true
+    }
+  })
+  const toggleWeb = (on: boolean) => {
+    setWeb(on)
+    try {
+      localStorage.setItem('mw:aiWeb', on ? '1' : '0')
+    } catch {}
+  }
   const [phase, setPhase] = useState<Phase>({ kind: 'ask' })
   const [accepted, setAccepted] = useState<Set<number>>(new Set())
   const compEnd = useRef(-1e9)
@@ -73,16 +86,18 @@ export function AiDialog({
     const id = ++reqId.current
     setPhase({ kind: 'loading' })
     try {
-      const r = await api<{ revised: string; summary: string; remaining: number }>('POST', `/api/wikis/${wikiId}/pages/${pageId}/ai/revise`, {
+      const r = await api<{ revised: string; summary: string; sources?: { uri: string; title?: string }[]; remaining: number }>('POST', `/api/wikis/${wikiId}/pages/${pageId}/ai/revise`, {
         content,
         start: range.start,
         end: range.end,
         preset,
         volume,
         instruction,
+        web,
       })
       if (id !== reqId.current) return
-      const segments = diffHunks(target, r.revised)
+      // Sources become one more hunk at the end, so they can be adopted or left out.
+      const segments = diffHunks(target, withSources(target, r.revised, r.sources ?? []))
       setAccepted(new Set(segments.flatMap((s) => ('id' in s ? [s.id] : []))))
       setPhase({ kind: 'review', segments, summary: r.summary, remaining: r.remaining })
     } catch (e) {
@@ -154,9 +169,13 @@ export function AiDialog({
                 }
               }}
             />
+            <label className="check-row">
+              <input type="checkbox" checked={web} onChange={(e) => toggleWeb(e.target.checked)} data-testid="ai-web" />
+              Web で調べる（Google 検索で確認できた事実を足し、出典を付けます）
+            </label>
             {phase.kind === 'error' && <div className="notice">{phase.message}</div>}
             <p className="muted small">
-              選んだ部分（とページ全体の文脈）が Google の Gemini に送られます。提案は保存されず、採用した変更だけが通常の編集として保存されます。
+              選んだ部分（とページ全体の文脈）が Google の Gemini に送られます{web && '。Web で調べるときは、ページの内容をもとに Google 検索も行われます'}。提案は保存されず、採用した変更だけが通常の編集として保存されます。
             </p>
             <div className="modal-actions">
               <button className="btn" onClick={onClose}>
@@ -205,6 +224,15 @@ export function AiDialog({
       </div>
     </Modal>
   )
+}
+
+/** Append a 出典 list to a web-grounded revision (only when something changed). */
+export function withSources(target: string, revised: string, sources: { uri: string; title?: string }[]): string {
+  if (!sources.length || revised === target) return revised
+  const trail = /\n*$/.exec(revised)![0]
+  const label = (s: { uri: string; title?: string }) => (s.title || new URL(s.uri).hostname).replace(/[[\]]/g, '')
+  const list = sources.map((s) => `- [${label(s)}](${s.uri.replace(/[()\s]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'))})`).join('\n')
+  return revised.replace(/\n*$/, '') + '\n\n出典:\n\n' + list + trail
 }
 
 /** Unchanged lines (collapsed) and each hunk with a checkbox; changed characters highlighted. */

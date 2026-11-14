@@ -467,6 +467,8 @@ test('AI suggestions: owner opts in, review the diff, adopt some changes, undo',
 
   // whole page: two hunks (typo fix, appended line); adopt only the typo fix
   await page.getByTestId('ai-button').click()
+  await expect(page.getByTestId('ai-web')).toBeChecked() // on by default; remembered per browser
+  await page.getByTestId('ai-web').uncheck()
   await page.getByRole('radio', { name: '誤字脱字だけ' }).click()
   await page.getByTestId('ai-run').click()
   await expect(page.getByTestId('ai-summary')).toHaveText('テスト用の提案（typo）')
@@ -517,6 +519,57 @@ test('AI suggestions: owner opts in, review the diff, adopt some changes, undo',
   await expect(page.getByTestId('src-editor')).toHaveCount(0)
   await expect(page.getByTestId('doc')).toContainText('first the line')
   await saved(page)
+
+  // web: grounded sources come as one more hunk at the end
+  await page.getByTestId('ai-button').click()
+  await expect(page.getByTestId('ai-web')).not.toBeChecked()
+  await page.getByTestId('ai-web').check()
+  await page.getByTestId('ai-run').click()
+  await expect(page.getByTestId('ai-summary')).toHaveText('テスト用の提案（auto, web）')
+  await expect(page.getByTestId('ai-hunk').last()).toContainText('出典:')
+  await expect(page.getByTestId('ai-hunk').last()).toContainText('- [example.com](https://example.com/source)')
+  await page.getByTestId('ai-apply').click()
+  await expect(page.getByTestId('doc').getByRole('link', { name: 'example.com' })).toHaveAttribute('href', 'https://example.com/source')
+  await saved(page)
+  await page.context().close()
+})
+
+test('task list: clicking a checkbox toggles it and rewrites the source', async ({ browser }) => {
+  const page = await login(browser, uniq('task'))
+  const slug = await createWiki(page, 'Task wiki')
+  await newPage(page, 'TODO')
+  await writeBody(page, '- [ ] one\n- [ ] two')
+  await saved(page)
+  const boxes = page.getByTestId('doc').locator('input[type=checkbox]')
+  await expect(boxes).toHaveCount(2)
+  await boxes.nth(1).click()
+  await expect(boxes.nth(1)).toBeChecked()
+  await expect(boxes.nth(0)).not.toBeChecked()
+  await saved(page)
+  await page.goto(`/w/${slug}/p/TODO`)
+  await expect(boxes.nth(1)).toBeChecked() // persisted as "- [x] two"
+  await boxes.nth(1).click()
+  await expect(boxes.nth(1)).not.toBeChecked()
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(boxes.nth(1)).toBeChecked()
+  await saved(page)
+  await page.context().close()
+})
+
+test('sidebar wiki switcher moves to the chosen wiki', async ({ browser }) => {
+  const page = await login(browser, uniq('switch'))
+  const a = await createWiki(page, 'Wiki A')
+  await newPage(page, 'Only in A')
+  await page.goto('/')
+  const b = await createWiki(page, 'Wiki B')
+  await expect(page).toHaveURL(new RegExp(`/w/${b}`))
+  await page.locator('.wiki-switch').selectOption(a)
+  await expect(page).toHaveURL(new RegExp(`/w/${a}$`))
+  await expect(page.locator('.wiki-switch')).toHaveValue(a)
+  await expect(page.getByTestId('sidebar')).toContainText('Only in A')
+  await page.locator('.wiki-switch').selectOption(b)
+  await expect(page).toHaveURL(new RegExp(`/w/${b}$`))
+  await expect(page.getByTestId('sidebar')).not.toContainText('Only in A')
   await page.context().close()
 })
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { applyHunks, charDiff, diffHunks } from '../shared/diff'
-import { buildPrompt } from '../server/ai'
+import { buildPrompt, parseTagged } from '../server/ai'
+import { withSources } from '../src/wiki/AiDialog'
 import { openDb } from '../server/db-node'
 import { createApp } from '../server/app'
 import type { Reviser, ReviseRequest } from '../server/ai'
@@ -42,6 +43,19 @@ describe('prompt', () => {
     const deep = buildPrompt({ wikiName: 'W', pageName: '開発/API/認証', page, start: 0, end: page.length, preset: 'auto', instruction: '' })
     expect(deep).toContain('- 階層: 「開発」 > 「API」 > 「認証」（「開発/API」の下にある「認証」のページ）')
     expect(deep).toContain('主題は「認証」')
+  })
+})
+
+describe('web mode', () => {
+  it('parses the tagged answer', () => {
+    expect(parseTagged('前置き\n<summary> 埋めた </summary>\n<revised>\n# A\n\nB\n</revised>')).toEqual({ revised: '# A\n\nB', summary: '埋めた' })
+    expect(() => parseTagged('{"revised": "x"}')).toThrow('bad_response')
+  })
+  it('appends sources only when something changed', () => {
+    const src = [{ uri: 'https://e.com/a (b)', title: 'E [x]' }, { uri: 'https://f.org/' }]
+    expect(withSources('a\n', 'a\n', src)).toBe('a\n')
+    expect(withSources('a\n', 'b\n', [])).toBe('b\n')
+    expect(withSources('a\n', 'b\n', src)).toBe('b\n\n出典:\n\n- [E x](https://e.com/a%20%28b%29)\n- [f.org](https://f.org/)\n')
   })
 })
 
