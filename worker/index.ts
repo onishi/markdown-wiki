@@ -7,6 +7,7 @@
  */
 import { DurableObject } from 'cloudflare:workers'
 import { createApp } from '../server/app.js'
+import { fakeReviser, geminiReviser } from '../server/ai.js'
 import { initSchema, type DB, type SqlParam } from '../server/db.js'
 
 interface Env {
@@ -14,8 +15,12 @@ interface Env {
   APP_ORIGIN?: string
   GOOGLE_CLIENT_ID?: string
   GOOGLE_CLIENT_SECRET?: string
+  /** Gemini API key for AI editing suggestions (optional). */
+  GOOGLE_AI_API_KEY?: string
   /** Local `wrangler dev` testing only; ignored unless the origin is http://localhost. */
   DEV_LOGIN?: string
+  /** Local tests only (with DEV_LOGIN): a deterministic fake instead of Gemini. */
+  AI_FAKE?: string
 }
 
 function sqlDb(storage: DurableObjectStorage): DB {
@@ -56,7 +61,8 @@ export class WikiServer extends DurableObject<Env> {
         this.env.GOOGLE_CLIENT_ID && this.env.GOOGLE_CLIENT_SECRET ? { clientId: this.env.GOOGLE_CLIENT_ID, clientSecret: this.env.GOOGLE_CLIENT_SECRET } : undefined
       // DEV_LOGIN never works on a deployed (https) origin.
       const devLogin = this.env.DEV_LOGIN === '1' && /^http:\/\/localhost(:\d+)?$/.test(appOrigin)
-      this.app = createApp(this.db, { appOrigin, google, devLogin, secureCookies: appOrigin.startsWith('https://') })
+      const ai = devLogin && this.env.AI_FAKE === '1' ? fakeReviser : this.env.GOOGLE_AI_API_KEY ? geminiReviser(this.env.GOOGLE_AI_API_KEY) : undefined
+      this.app = createApp(this.db, { appOrigin, google, devLogin, secureCookies: appOrigin.startsWith('https://'), ai })
     }
     return this.app.fetch(req)
   }

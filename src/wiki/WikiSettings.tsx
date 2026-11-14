@@ -168,6 +168,28 @@ export function WikiSettings() {
             </select>
           </section>
           <section>
+            <h3>AI による編集の提案</h3>
+            {wiki.aiAvailable ? (
+              <>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={!!wiki.aiEnabled}
+                    data-testid="ai-enabled"
+                    onChange={(e) => {
+                      const on = e.target.checked
+                      run(async () => (await api('PATCH', `/api/wikis/${wiki.id}`, { aiEnabled: on }), await reloadWiki()), on ? 'AI の提案を有効にしました。' : 'AI の提案を無効にしました。')
+                    }}
+                  />
+                  編集者がページの「AI」から修正の提案を受けられるようにする
+                </label>
+                <p className="muted small">提案を作るとき、対象の文章とページの内容が Google の Gemini API に送られます。提案は差分で確認し、選んだ変更だけが保存されます。</p>
+              </>
+            ) : (
+              <p className="muted small">サーバーに Gemini の API キー（GOOGLE_AI_API_KEY）が設定されていないため使えません。</p>
+            )}
+          </section>
+          <section>
             <h3>URL の識別子</h3>
             <p className="muted small">
               ページの URL は <code>{location.origin}/w/{wiki.slug}/p/ページ名</code> です。変更しても、前の識別子の URL は新しい識別子へ転送されます。

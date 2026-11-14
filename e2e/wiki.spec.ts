@@ -451,6 +451,52 @@ test('help page is readable without logging in', async ({ page }) => {
   await expect(page.locator('#links')).toBeInViewport()
 })
 
+test('AI suggestions: owner opts in, review the diff, adopt some changes, undo', async ({ browser }) => {
+  const page = await login(browser, uniq('ai'))
+  const slug = await createWiki(page, 'AI wiki')
+  await newPage(page, 'Doc')
+  await writeBody(page, 'first teh line\n\nsecond line')
+  await saved(page)
+  await expect(page.getByTestId('ai-button')).toHaveCount(0) // off until the owner enables it
+
+  await page.goto(`/w/${slug}/settings`)
+  await page.getByTestId('ai-enabled').click()
+  await expect(page.getByTestId('ai-enabled')).toBeChecked()
+  await expect(page.getByText('AI の提案を有効にしました。')).toBeVisible()
+  await page.goto(`/w/${slug}/p/Doc`)
+
+  // whole page: two hunks (typo fix, appended line); adopt only the typo fix
+  await page.getByTestId('ai-button').click()
+  await page.getByRole('radio', { name: '誤字脱字だけ' }).click()
+  await page.getByTestId('ai-run').click()
+  await expect(page.getByTestId('ai-summary')).toHaveText('テスト用の提案（typo）')
+  const hunks = page.getByTestId('ai-hunk')
+  await expect(hunks).toHaveCount(2)
+  await expect(hunks.first().locator('.ai-line.del')).toHaveText('first teh line')
+  await expect(hunks.first().locator('.ai-line.add')).toHaveText('first the line')
+  await hunks.nth(1).locator('input').uncheck()
+  await page.getByTestId('ai-apply').click()
+  await expect(page.getByTestId('doc')).toContainText('first the line')
+  await expect(page.getByTestId('doc')).not.toContainText('AI 追記')
+  await saved(page)
+
+  // ⌘Z restores the text before the suggestion
+  await page.keyboard.press('ControlOrMeta+z')
+  await expect(page.getByTestId('doc')).toContainText('first teh line')
+
+  // selection: only the selected block is sent and replaced
+  await page.getByText('second line').selectText()
+  await page.getByTestId('ai-button').click()
+  await expect(page.getByRole('radio', { name: /選択した部分/ })).toBeChecked()
+  await page.getByTestId('ai-run').click()
+  await expect(page.getByTestId('ai-hunk')).toHaveCount(1)
+  await page.getByTestId('ai-apply').click()
+  await expect(page.getByTestId('doc')).toContainText('first teh line') // outside the selection: untouched
+  await expect(page.getByTestId('doc')).toContainText('AI 追記')
+  await saved(page)
+  await page.context().close()
+})
+
 test('page header: … menu, ? shortcut list', async ({ browser }) => {
   const page = await login(browser, uniq('ui'))
   await createWiki(page, 'UI wiki')

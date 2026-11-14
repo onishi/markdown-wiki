@@ -9,7 +9,7 @@ export default defineConfig({
   ...base,
   use: { ...base.use, baseURL: `http://localhost:${PORT}` },
   webServer: {
-    command: `npx wrangler dev --port ${PORT} --persist-to .wrangler/e2e-${Date.now()} --var DEV_LOGIN:1 --var APP_ORIGIN:http://localhost:${PORT}`,
+    command: `npx wrangler dev --port ${PORT} --persist-to .wrangler/e2e-${Date.now()} --var DEV_LOGIN:1 --var AI_FAKE:1 --var APP_ORIGIN:http://localhost:${PORT}`,
     port: PORT,
     reuseExistingServer: false,
   },

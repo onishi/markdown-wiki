@@ -35,6 +35,10 @@ export interface DocEditorProps {
 export interface DocEditorHandle {
   /** Put the caret at a source offset and scroll its block to the top of the view. */
   jumpTo: (offset: number) => void
+  /** The selected range widened to whole edit units (null: nothing selected, or editing). */
+  selectedUnits: () => { start: number; end: number } | null
+  /** Replace the document as one undoable step (⌘Z / u restores the previous text). */
+  replaceAll: (next: string) => void
 }
 
 interface EditState {
@@ -321,6 +325,21 @@ export function DocEditor(props: DocEditorProps) {
           pending.current = { caret: offset, focusDoc: true, top: true }
           forceRender((n) => n + 1)
         }
+      },
+      selectedUnits: () => {
+        if (editRef.current) return null
+        const r = selectionRange()
+        if (!r) return null
+        const u = computeRangeUnit(liveTree, source, r[0], r[1], listMode)
+        return u.end > u.start ? { start: u.start, end: u.end } : null
+      },
+      replaceAll: (next: string) => {
+        if (editRef.current || next === source) return
+        record(source)
+        let i = 0
+        while (i < next.length && i < source.length && next[i] === source[i]) i++
+        pending.current = { caret: i, focusDoc: true, reveal: true }
+        emit(next)
       },
     }
   }
