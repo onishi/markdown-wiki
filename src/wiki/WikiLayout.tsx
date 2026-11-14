@@ -212,9 +212,9 @@ function Sidebar({ wikis, outline, open }: { wikis: WikiSummary[]; outline: Outl
   const tree = useMemo(() => buildTree(filtered), [filtered])
   const [tab, setTab] = useState<'pages' | 'outline'>(() => {
     try {
-      return localStorage.getItem('mw:sideTab') === 'outline' ? 'outline' : 'pages'
+      return localStorage.getItem('mw:sideTab') === 'pages' ? 'pages' : 'outline'
     } catch {
-      return 'pages'
+      return 'outline'
     }
   })
   const switchTab = (t: 'pages' | 'outline') => {
@@ -245,12 +245,20 @@ function Sidebar({ wikis, outline, open }: { wikis: WikiSummary[]; outline: Outl
           {ROLE_LABEL[role]}
         </div>
       </div>
-      <div className="side-tabs" role="tablist">
-        <button role="tab" aria-selected={tab === 'pages'} className={tab === 'pages' ? 'on' : ''} onClick={() => switchTab('pages')}>
-          ページ
+      <button className="btn btn-block quick-btn" onClick={openQuick} data-testid="quick-open">
+        ページを開く… <kbd>{/Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'}K</kbd>
+      </button>
+      {canEdit && (
+        <button className="btn btn-block" onClick={() => openNewPage('')} data-testid="new-page">
+          ＋ 新しいページ
         </button>
+      )}
+      <div className="side-tabs" role="tablist">
         <button role="tab" aria-selected={tab === 'outline'} className={tab === 'outline' ? 'on' : ''} onClick={() => switchTab('outline')} data-testid="tab-outline">
           アウトライン
+        </button>
+        <button role="tab" aria-selected={tab === 'pages'} className={tab === 'pages' ? 'on' : ''} onClick={() => switchTab('pages')} data-testid="tab-pages">
+          ページ
         </button>
       </div>
       {tab === 'outline' ? (
@@ -260,14 +268,6 @@ function Sidebar({ wikis, outline, open }: { wikis: WikiSummary[]; outline: Outl
       ) : (
         <>
         <input className="search" type="search" placeholder="ページ名で検索" value={q} onChange={(e) => setQ(e.target.value)} aria-label="ページ名で検索" data-testid="search" />
-        <button className="btn btn-block quick-btn" onClick={openQuick} data-testid="quick-open">
-          ページを開く… <kbd>{/Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'}K</kbd>
-        </button>
-        {canEdit && (
-          <button className="btn btn-block" onClick={() => openNewPage('')} data-testid="new-page">
-            ＋ 新しいページ
-          </button>
-        )}
         <nav className="tree" aria-label="ページ階層">
           <NavLink end to={`/w/${wiki.slug}?list`} className="tree-home">
             すべてのページ

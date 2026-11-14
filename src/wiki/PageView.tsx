@@ -167,6 +167,14 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
     loaded.renamedFrom ? `「${loaded.renamedFrom}」は「${page.name}」に名前が変わりました。` : loaded.restored && !loaded.conflict ? '保存されていなかった変更をこのブラウザから復元しました。' : null,
   )
   const [dialog, setDialog] = useState<'rename' | 'delete' | 'history' | null>(null)
+  // The sticky header gets a bottom border once the page has scrolled under it.
+  const [stuck, setStuck] = useState(false)
+  useEffect(() => {
+    const on = () => setStuck(window.scrollY > 4)
+    on()
+    window.addEventListener('scroll', on, { passive: true })
+    return () => window.removeEventListener('scroll', on)
+  }, [])
   const [ai, setAi] = useState<{ content: string; selection: { start: number; end: number; editing: boolean } | null } | null>(null)
   const [roNotice, setRoNotice] = useState(false)
   const [help, setHelp] = useState(false)
@@ -226,7 +234,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
 
   return (
     <div className="page">
-      <div className="page-head">
+      <div className={'page-head' + (stuck ? ' stuck' : '')}>
         <Breadcrumb name={page.name} />
         <div className="page-actions">
           <SaveIndicator saver={saver} onConflict={() => setShowConflict(true)} />

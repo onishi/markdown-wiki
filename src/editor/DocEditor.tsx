@@ -319,7 +319,7 @@ export function DocEditor(props: DocEditorProps) {
           const top = (block ?? pt.node.parentElement)?.getBoundingClientRect().top ?? r?.top
           if (top !== undefined) window.scrollBy({ top: top - 72, behavior: 'instant' as ScrollBehavior })
         } else if (r && p.anchorY !== undefined) window.scrollBy(0, r.top - p.anchorY)
-        else if (r && p.reveal && (r.top < 64 || r.bottom > window.innerHeight - 64)) window.scrollBy({ top: r.top - window.innerHeight / 3, behavior: 'instant' as ScrollBehavior })
+        else if (r && p.reveal && (r.top < 80 || r.bottom > window.innerHeight - 64)) window.scrollBy({ top: r.top - window.innerHeight / 3, behavior: 'instant' as ScrollBehavior })
       }
     }
     paint()
@@ -579,7 +579,8 @@ export function DocEditor(props: DocEditorProps) {
     const r = caretRect(sel.focusNode!, sel.focusOffset)
     if (!r) return
     const margin = 48
-    if (r.top < margin) window.scrollBy(0, r.top - margin)
+    const top = 72 // below the sticky page header
+    if (r.top < top) window.scrollBy(0, r.top - top)
     else if (r.bottom > window.innerHeight - margin) window.scrollBy(0, r.bottom - window.innerHeight + margin)
   }
 
