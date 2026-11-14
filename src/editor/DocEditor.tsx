@@ -35,10 +35,20 @@ export interface DocEditorProps {
 export interface DocEditorHandle {
   /** Put the caret at a source offset and scroll its block to the top of the view. */
   jumpTo: (offset: number) => void
-  /** The selected range widened to whole edit units (null: nothing selected, or editing). */
-  selectedUnits: () => { start: number; end: number } | null
-  /** Replace the document as one undoable step (⌘Z / u restores the previous text). */
+  /**
+   * The range to work on: in display mode the selection widened to whole edit units
+   * (null: nothing selected); while editing, the selected lines of the source editor,
+   * or the whole block being edited.
+   */
+  selectedUnits: () => { start: number; end: number; editing: boolean } | null
+  /**
+   * Replace the document as one undoable step.  While editing, a change that stays
+   * inside the block being edited is typed into the source editor (its own ⌘Z undoes
+   * it); otherwise editing ends first and ⌘Z / u in display mode restores the text.
+   */
   replaceAll: (next: string) => void
+  /** Give the keyboard back to the editor (the source editor while editing). */
+  focus: () => void
 }
 
 interface EditState {
@@ -327,19 +337,56 @@ export function DocEditor(props: DocEditorProps) {
         }
       },
       selectedUnits: () => {
-        if (editRef.current) return null
+        const e = editRef.current
+        if (e) {
+          const ta = taRef.current
+          let a = 0
+          let b = e.text.length
+          if (ta && ta.selectionStart < ta.selectionEnd) {
+            // Whole lines of the selection: the AI rewrites sentences, not fragments.
+            a = e.text.lastIndexOf('\n', ta.selectionStart - 1) + 1
+            const nl = e.text.indexOf('\n', ta.selectionEnd - (e.text[ta.selectionEnd - 1] === '\n' ? 1 : 0))
+            b = nl < 0 ? e.text.length : nl
+          }
+          return b > a ? { start: e.unit.start + a, end: e.unit.start + b, editing: true } : null
+        }
         const r = selectionRange()
         if (!r) return null
         const u = computeRangeUnit(liveTree, source, r[0], r[1], listMode)
-        return u.end > u.start ? { start: u.start, end: u.end } : null
+        return u.end > u.start ? { start: u.start, end: u.end, editing: false } : null
       },
       replaceAll: (next: string) => {
-        if (editRef.current || next === source) return
-        record(source)
+        if (next === source) return
         let i = 0
         while (i < next.length && i < source.length && next[i] === source[i]) i++
+        const e = editRef.current
+        if (e) {
+          let j = 0
+          while (j < next.length - i && j < source.length - i && next[next.length - 1 - j] === source[source.length - 1 - j]) j++
+          const from = i - e.unit.start
+          const to = source.length - j - e.unit.start
+          const ta = taRef.current
+          if (ta && from >= 0 && to <= e.text.length) {
+            ta.focus()
+            ta.setSelectionRange(from, to)
+            const ins = next.slice(i, next.length - j)
+            // execCommand keeps it one native undo step; fall back to a plain update.
+            const ok = ins ? document.execCommand('insertText', false, ins) : document.execCommand('delete')
+            if (!ok || ta.value !== e.text.slice(0, from) + ins + e.text.slice(to)) editCtxRef.current?.setText(e.text.slice(0, from) + ins + e.text.slice(to))
+            return
+          }
+          // The change reaches outside the block: finish editing, then replace.
+          editRef.current = null
+          setEdit(null)
+          if (source !== e.frozenSrc) record(e.frozenSrc)
+        }
+        record(source)
         pending.current = { caret: i, focusDoc: true, reveal: true }
         emit(next)
+      },
+      focus: () => {
+        if (editRef.current) taRef.current?.focus()
+        else rootRef.current?.focus({ preventScroll: true })
       },
     }
   }
@@ -1131,6 +1178,9 @@ export function DocEditor(props: DocEditorProps) {
         : null,
     [edit, emit, exitEdit, insertImages, props.onUploadImage, props.wikiNames],
   )
+
+  const editCtxRef = useRef(editCtx)
+  editCtxRef.current = editCtx
 
   const hasSelection = menu?.kind === 'context' ? !!selectionRange() : true
 

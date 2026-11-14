@@ -167,7 +167,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
     loaded.renamedFrom ? `「${loaded.renamedFrom}」は「${page.name}」に名前が変わりました。` : loaded.restored && !loaded.conflict ? '保存されていなかった変更をこのブラウザから復元しました。' : null,
   )
   const [dialog, setDialog] = useState<'rename' | 'delete' | 'history' | null>(null)
-  const [ai, setAi] = useState<{ content: string; selection: { start: number; end: number } | null } | null>(null)
+  const [ai, setAi] = useState<{ content: string; selection: { start: number; end: number; editing: boolean } | null } | null>(null)
   const [roNotice, setRoNotice] = useState(false)
   const [help, setHelp] = useState(false)
 
@@ -233,9 +233,9 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           {canEdit && wiki.aiEnabled && wiki.aiAvailable && (
             <button
               className="btn btn-small"
-              disabled={editing || saver.status === 'conflict'}
-              title={editing ? '編集を終えてから使えます' : '選択した部分（またはページ全体）の修正を AI に提案してもらう'}
-              // Keep the document selection: it decides what the AI rewrites.
+              disabled={saver.status === 'conflict'}
+              title={editing ? '編集中のブロック（または選択した行）の修正を AI に提案してもらう' : '選択した部分（またはページ全体）の修正を AI に提案してもらう'}
+              // Keep the selection (document or source editor): it decides what the AI rewrites.
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => setAi({ content: saver.content, selection: editorHandle.current?.selectedUnits() ?? null })}
               data-testid="ai-button"
@@ -305,9 +305,13 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           pageId={page.id}
           content={ai.content}
           selection={ai.selection}
-          onClose={() => setAi(null)}
+          onClose={() => {
+            setAi(null)
+            editorHandle.current?.focus()
+          }}
           onApply={(next) => {
             setAi(null)
+            editorHandle.current?.focus()
             if (saver.content !== ai.content) {
               setNotice('提案を作っている間にページが更新されたため、採用できませんでした。もう一度お試しください。')
               return

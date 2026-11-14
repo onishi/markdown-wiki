@@ -15,6 +15,13 @@ const PRESETS: { key: string; label: string }[] = [
   { key: 'summary', label: '冒頭に要約' },
 ]
 
+const VOLUMES: { key: string; label: string }[] = [
+  { key: 'auto', label: 'おまかせ' },
+  { key: 'short', label: '短く' },
+  { key: 'same', label: '同じくらい' },
+  { key: 'long', label: '長く' },
+]
+
 const ERRORS: Record<string, string> = {
   ai_disabled: 'この wiki では AI が有効になっていません（共有設定でオーナーが有効にできます）。',
   ai_unavailable: 'サーバーに AI の API キーが設定されていません。',
@@ -45,13 +52,14 @@ export function AiDialog({
   pageId: string
   /** The text at the time the dialog opened. */
   content: string
-  /** Selected range widened to whole blocks (null: no selection). */
-  selection: { start: number; end: number } | null
+  /** Selected range widened to whole blocks or lines (null: no selection); `editing`: taken from the source editor. */
+  selection: { start: number; end: number; editing?: boolean } | null
   onApply: (next: string) => void
   onClose: () => void
 }) {
   const [scope, setScope] = useState<'selection' | 'page'>(selection ? 'selection' : 'page')
   const [preset, setPreset] = useState('auto')
+  const [volume, setVolume] = useState('auto')
   const [instruction, setInstruction] = useState('')
   const [phase, setPhase] = useState<Phase>({ kind: 'ask' })
   const [accepted, setAccepted] = useState<Set<number>>(new Set())
@@ -70,6 +78,7 @@ export function AiDialog({
         start: range.start,
         end: range.end,
         preset,
+        volume,
         instruction,
       })
       if (id !== reqId.current) return
@@ -105,7 +114,8 @@ export function AiDialog({
             <div className="ai-scope" role="radiogroup" aria-label="対象">
               <label>
                 <input type="radio" checked={scope === 'selection'} disabled={!selection} onChange={() => setScope('selection')} />
-                選択した部分{selection && <span className="muted small">（{content.slice(selection.start, selection.end).split('\n').length} 行）</span>}
+                {selection?.editing ? '編集中の部分' : '選択した部分'}
+                {selection && <span className="muted small">（{content.slice(selection.start, selection.end).split('\n').length} 行）</span>}
               </label>
               <label>
                 <input type="radio" checked={scope === 'page'} onChange={() => setScope('page')} />
@@ -117,6 +127,14 @@ export function AiDialog({
               {PRESETS.map((p) => (
                 <button key={p.key} type="button" role="radio" aria-checked={preset === p.key} className={'chip' + (preset === p.key ? ' on' : '')} onClick={() => setPreset(p.key)}>
                   {p.label}
+                </button>
+              ))}
+            </div>
+            <div className="ai-volume" role="radiogroup" aria-label="分量">
+              <span className="muted small">分量</span>
+              {VOLUMES.map((v) => (
+                <button key={v.key} type="button" role="radio" aria-checked={volume === v.key} className={'chip' + (volume === v.key ? ' on' : '')} onClick={() => setVolume(v.key)}>
+                  {v.label}
                 </button>
               ))}
             </div>
