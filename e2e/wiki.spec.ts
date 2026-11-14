@@ -240,6 +240,7 @@ test('top page: wiki URL without a page redirects there; page list stays reachab
   await page.goto(`/w/${wid}/p/`)
   await expect(page).toHaveURL(new RegExp(`/p/${encodeURIComponent('はじめに')}$`))
 
+  await page.getByTestId('tab-pages').click() // the sidebar opens on the outline
   await page.getByRole('link', { name: 'すべてのページ' }).click()
   await expect(page.getByRole('heading', { name: /すべてのページ/ })).toBeVisible()
 
@@ -563,6 +564,7 @@ test('sidebar wiki switcher moves to the chosen wiki', async ({ browser }) => {
   await page.goto('/')
   const b = await createWiki(page, 'Wiki B')
   await expect(page).toHaveURL(new RegExp(`/w/${b}`))
+  await page.getByTestId('tab-pages').click() // the sidebar opens on the outline
   await page.locator('.wiki-switch').selectOption(a)
   await expect(page).toHaveURL(new RegExp(`/w/${a}$`))
   await expect(page.locator('.wiki-switch')).toHaveValue(a)
@@ -580,6 +582,9 @@ test('page header: … menu, ? shortcut list', async ({ browser }) => {
   await expect(page.getByTestId('rename')).toHaveCount(0) // tucked into the … menu
   await page.getByTestId('page-menu').click()
   await expect(page.getByRole('menuitem')).toHaveText(['子ページを作成', '名前を変更', '削除'])
+  // sidebar: outline first and selected by default
+  await expect(page.getByRole('tab')).toHaveText(['アウトライン', 'ページ'])
+  await expect(page.getByTestId('tab-outline')).toHaveAttribute('aria-selected', 'true')
   await page.keyboard.press('Escape')
   await expect(page.getByRole('menuitem')).toHaveCount(0)
   await page.getByTestId('help-button').click()

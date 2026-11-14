@@ -225,6 +225,12 @@ label.check { display: flex; gap: 8px; align-items: center; margin: 10px 0; font
 .page { max-width: 800px; margin: 0 auto; padding: 24px 32px 80px 60px; }
 .page-loading { padding: 40px; }
 .page-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; min-height: 32px; }
+/* Stays at the top while the page scrolls (desktop; on phones the mobile bar is the sticky one). */
+@media (min-width: 761px) {
+  html { scroll-padding-top: 64px; }
+  .page-head { position: sticky; top: 0; z-index: 12; margin: -24px -32px 0 -60px; padding: 10px 32px 10px 60px; background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid transparent; }
+  .page-head.stuck { border-bottom-color: var(--border); }
+}
 .breadcrumb { font-size: 13px; color: var(--fg-muted); }
 .breadcrumb a { color: var(--fg-muted); text-decoration: none; }
 .breadcrumb a:hover { color: var(--accent); }
