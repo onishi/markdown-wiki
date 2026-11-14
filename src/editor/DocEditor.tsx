@@ -858,7 +858,9 @@ export function DocEditor(props: DocEditorProps) {
     setLineSel(null)
     if (atEndRef.current) setAtEnd(false)
     if (target.matches('input[type=checkbox]')) {
+      // Keep the keyboard on the document (⌘Z right after toggling a task).
       e.preventDefault()
+      rootRef.current?.focus({ preventScroll: true })
       return
     }
     const pt = pointFromCoords(e.clientX, e.clientY)
@@ -938,7 +940,9 @@ export function DocEditor(props: DocEditorProps) {
     const target = e.target as Element
     if (target.closest('.src-editor') || target.closest('.doc-menu')) return
     if (target.matches('input[type=checkbox][data-task]')) {
-      e.preventDefault()
+      // No preventDefault: on a checkbox it makes the browser revert the box *after*
+      // React has re-rendered it, so the new state never shows.  The input is
+      // controlled, so React puts it back to the source's state if nothing changes.
       toggleTask(target as HTMLInputElement)
       return
     }

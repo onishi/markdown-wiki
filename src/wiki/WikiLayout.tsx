@@ -44,14 +44,21 @@ export function WikiLayout() {
   const [newPage, setNewPage] = useState<string | null>(null)
   const [outline, setOutline] = useState<OutlineSource | null>(null)
 
+  const currentWid = useRef(wid)
+  currentWid.current = wid
   const reloadPages = useCallback(async () => {
     const r = await api<{ pages: PageSummary[]; aliases: { name: string; pageId: string }[] }>('GET', `/api/wikis/${wid}/pages`)
+    if (currentWid.current !== wid) return
     setPages(r.pages)
     setAliases(r.aliases)
   }, [wid])
 
+  // The URL segment the shown `wiki` was loaded for (null while another one loads).
+  const loadedFor = useRef<string | null>(null)
   const reloadWiki = useCallback(async () => {
     const r = await api<{ wiki: WikiSummary }>('GET', `/api/wikis/${wid}`)
+    if (currentWid.current !== wid) return // switched away meanwhile
+    loadedFor.current = wid!
     setWiki(r.wiki)
   }, [wid])
 
@@ -64,7 +71,11 @@ export function WikiLayout() {
     try {
       localStorage.setItem('mw:lastWiki', wid!)
     } catch {}
-    if (shownSlug.current === wid) return
+    if (shownSlug.current === wid) {
+      loadedFor.current = wid
+      return
+    }
+    loadedFor.current = null
     setWiki(null)
     setError(null)
     reloadWiki()
@@ -75,7 +86,9 @@ export function WikiLayout() {
   // Old slugs and raw ids still open the wiki; show the canonical /w/<slug> URL.
   const loc = useLocation()
   useEffect(() => {
-    if (wiki && wid !== wiki.slug) nav(loc.pathname.replace(`/w/${wid}`, `/w/${wiki.slug}`) + loc.search + loc.hash, { replace: true })
+    // Only for the wiki loaded for this URL: right after switching wikis, `wiki` is
+    // still the previous one and would send the user back to it.
+    if (wiki && loadedFor.current === wid && wid !== wiki.slug) nav(loc.pathname.replace(`/w/${wid}`, `/w/${wiki.slug}`) + loc.search + loc.hash, { replace: true })
   }, [wiki, wid, loc, nav])
 
   const slug = wiki?.slug ?? wid!

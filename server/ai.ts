@@ -44,24 +44,75 @@ export interface ReviseRequest {
   /** Target length (default "auto"). */
   volume?: AiVolume
   instruction: string
+  /** Let the model look things up with Google Search (grounding). */
+  web?: boolean
+}
+export interface AiSource {
+  uri: string
+  title?: string
 }
 export interface ReviseResult {
   revised: string
   summary: string
+  /** Web pages the answer was grounded on (web mode only). */
+  sources?: AiSource[]
 }
 export type Reviser = (r: ReviseRequest) => Promise<ReviseResult>
+
+const COMMON_RULES = `- 書き換えるのは「対象」だけです。返す revised は、書き換え後の「対象」部分の全文です（ページ全体ではありません。対象の外の文章を含めないでください）。
+- 指示に関係しない箇所は一字一句変えないでください。好みで言い回しを変えないでください。
+- 文体（です・ます／である）、用語、表記は元の文章に合わせてください。
+- Markdown の構造を保ってください。[[ページ名]] や [[ページ名|表示名]] の wiki リンク、URL、画像、コードブロックの中身は変えないでください。`
 
 const SYSTEM = `あなたはチームで使う Markdown wiki の編集を手伝うアシスタントです。
 指定された「対象」の部分を、指示に従って書き換えた結果を返します。
 
 【ルール】
-- 書き換えるのは「対象」だけです。返す revised は、書き換え後の「対象」部分の全文です（ページ全体ではありません。対象の外の文章を含めないでください）。
-- 指示に関係しない箇所は一字一句変えないでください。好みで言い回しを変えないでください。
+${COMMON_RULES}
 - 本文に書かれていない事実・数値・固有名詞を作らないでください。推測で補わないでください。
-- 文体（です・ます／である）、用語、表記は元の文章に合わせてください。
 - 本文にない URL、[[リンク]]、コマンド、設定値を新しく作らないでください。
-- Markdown の構造を保ってください。[[ページ名]] や [[ページ名|表示名]] の wiki リンク、URL、画像、コードブロックの中身は変えないでください。
 - summary には、何をどう変えたかを日本語 1〜2 文で書いてください。変更が不要なら revised に対象をそのまま入れ、summary にその旨を書いてください。`
+
+/** Web mode: Google Search grounding cannot be combined with JSON output, so the answer comes in tags. */
+const SYSTEM_WEB = `あなたはチームで使う Markdown wiki の編集を手伝うアシスタントです。
+指定された「対象」の部分を、指示に従って書き換えた結果を返します。必要に応じて Google 検索で調べてください。
+
+【ルール】
+${COMMON_RULES}
+- 本文にない事実・数値・固有名詞は、Google 検索の結果で確認できたものだけを追加してください。確認できないことは書かず、推測で補わないでください。「(TBD)」は検索で確認できた場合だけ埋めてください。
+- ページタイトル（主題）について調べてください。同名の別のものと取り違えないでください。
+- 本文に URL や出典は書かないでください（出典は別に表示されます）。本文にない [[リンク]]、コマンド、設定値も作らないでください。
+
+【出力形式】次の形式だけを出力してください。前後に説明やコードフェンスを付けないでください。
+<summary>何をどう変えたか（日本語 1〜2 文。検索で確認した内容を足した場合はそのことも）</summary>
+<revised>
+書き換え後の対象部分の全文（変更が不要なら対象をそのまま）
+</revised>`
+
+/** Pull summary / revised out of the tagged web-mode answer. */
+export function parseTagged(text: string): { revised: string; summary: string } {
+  const a = text.indexOf('<revised>')
+  const b = text.lastIndexOf('</revised>')
+  if (a < 0 || b < a) throw new Error('bad_response')
+  let revised = text.slice(a + '<revised>'.length, b)
+  if (revised.startsWith('\n')) revised = revised.slice(1)
+  if (revised.endsWith('\n')) revised = revised.slice(0, -1)
+  const m = /<summary>([\s\S]*?)<\/summary>/.exec(text)
+  return { revised, summary: m ? m[1].trim() : '' }
+}
+
+/** Grounding links are redirects through Google; resolve them to the real page (best effort). */
+async function resolveSource(uri: string, title?: string): Promise<AiSource> {
+  // Only follow Google's own redirector; never fetch arbitrary hosts from the server.
+  if (!/^https:\/\/vertexaisearch\.cloud\.google\.com\//.test(uri)) return { uri, title }
+  try {
+    const res = await fetch(uri, { redirect: 'follow', signal: AbortSignal.timeout(5000) })
+    await res.body?.cancel()
+    return { uri: res.url || uri, title }
+  } catch {
+    return { uri, title }
+  }
+}
 
 /** What the page is about: its title is the subject, and `/` in it is the hierarchy. */
 export function pageInfo(wikiName: string, pageName: string): string {
@@ -112,24 +163,33 @@ export function geminiReviser(apiKey: string): Reviser {
     const res = await ai.models.generateContent({
       model: MODEL,
       contents: buildPrompt(r),
-      config: {
-        systemInstruction: SYSTEM,
-        responseMimeType: 'application/json',
-        responseJsonSchema: {
-          type: 'object',
-          properties: {
-            revised: { type: 'string', description: '書き換え後の対象部分の全文（Markdown）' },
-            summary: { type: 'string', description: '変更内容の要約（日本語 1〜2 文）' },
+      config: r.web
+        ? { systemInstruction: SYSTEM_WEB, tools: [{ googleSearch: {} }] }
+        : {
+            systemInstruction: SYSTEM,
+            responseMimeType: 'application/json',
+            responseJsonSchema: {
+              type: 'object',
+              properties: {
+                revised: { type: 'string', description: '書き換え後の対象部分の全文（Markdown）' },
+                summary: { type: 'string', description: '変更内容の要約（日本語 1〜2 文）' },
+              },
+              required: ['revised', 'summary'],
+            },
           },
-          required: ['revised', 'summary'],
-        },
-      },
     })
     let text = ''
     try {
       text = res.text ?? ''
     } catch {
       // blocked or empty response
+    }
+    if (r.web) {
+      const out = parseTagged(text)
+      const seen = new Set<string>()
+      const chunks = (res.candidates?.[0]?.groundingMetadata?.groundingChunks ?? []).filter((c) => c.web?.uri && !seen.has(c.web.uri) && seen.add(c.web.uri))
+      const sources = await Promise.all(chunks.slice(0, 8).map((c) => resolveSource(c.web!.uri!, c.web!.title)))
+      return { ...out, sources }
     }
     const out = JSON.parse(text) as Partial<ReviseResult>
     if (typeof out.revised !== 'string') throw new Error('bad_response')
@@ -143,5 +203,9 @@ export function geminiReviser(apiKey: string): Reviser {
  */
 export const fakeReviser: Reviser = async (r) => {
   const target = r.page.slice(r.start, r.end)
-  return { revised: target.replace(/teh/g, 'the') + '\n\n（AI 追記）', summary: `テスト用の提案（${r.preset}${r.volume && r.volume !== 'auto' ? ', ' + r.volume : ''}）` }
+  return {
+    revised: target.replace(/teh/g, 'the') + '\n\n（AI 追記）',
+    summary: `テスト用の提案（${r.preset}${r.volume && r.volume !== 'auto' ? ', ' + r.volume : ''}${r.web ? ', web' : ''}）`,
+    sources: r.web ? [{ uri: 'https://example.com/source', title: 'example.com' }] : undefined,
+  }
 }

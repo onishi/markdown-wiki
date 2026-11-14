@@ -528,7 +528,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (!w.ai_enabled) return c.json({ error: 'ai_disabled' }, 403)
     const page = db.prepare('SELECT name FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, c.req.param('pid')) as { name: string } | undefined
     if (!page) return c.json({ error: 'not_found' }, 404)
-    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; volume?: string; instruction?: string }>(c)
+    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; volume?: string; instruction?: string; web?: boolean }>(c)
     const content = b.content
     if (typeof content !== 'string' || content.length > MAX_CONTENT) return c.json({ error: 'invalid' }, 400)
     const start = b.start ?? 0
@@ -551,7 +551,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     const target = content.slice(start, end)
     let r
     try {
-      r = await cfg.ai({ wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction })
+      r = await cfg.ai({ wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: b.web === true })
     } catch (e) {
       console.error('ai revise failed', e)
       return c.json({ error: 'ai_failed' }, 502)
@@ -560,7 +560,9 @@ export function createApp(db: DB, cfg: AppConfig) {
     let revised = r.revised.replace(/\r\n?/g, '\n')
     const trail = (t: string) => /\n*$/.exec(t)![0]
     revised = revised.replace(/\n*$/, '') + trail(target)
-    return c.json({ revised, summary: r.summary, remaining: AI_DAILY_LIMIT - used - 1 })
+    // Only plain web links reach the client (they may be pasted into the page).
+    const sources = (r.sources ?? []).filter((s) => /^https?:\/\//.test(s.uri)).map((s) => ({ uri: s.uri, title: s.title?.slice(0, 200) }))
+    return c.json({ revised, summary: r.summary, sources, remaining: AI_DAILY_LIMIT - used - 1 })
   })
 
   app.post('/api/wikis/:wid/pages/:pid/rename', async (c) => {
