@@ -430,3 +430,29 @@ mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0 1px; 
 .help-syntax pre { margin: 0; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
 .help-roles th { white-space: nowrap; width: 6em; }
 .help-page .help { max-height: none; overflow: visible; }
+.check-row { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.ai-dialog { display: flex; flex-direction: column; gap: 10px; }
+.ai-scope { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; font-size: 14px; }
+.ai-scope label { display: inline-flex; gap: 4px; align-items: center; }
+.ai-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--border); background: none; color: var(--fg); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.chip:hover { border-color: var(--accent); }
+.chip.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.ai-instruction { resize: vertical; }
+.ai-summary { margin: 0; padding: 8px 12px; background: var(--accent-soft); border-radius: 6px; font-size: 14px; }
+.ai-bulk { display: flex; gap: 12px; align-items: center; }
+.ai-diff { max-height: 55vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.6; }
+.ai-line { padding: 0 10px 0 34px; white-space: pre-wrap; word-break: break-word; }
+.ai-line.same { color: var(--fg-muted); }
+.ai-skip { padding: 0 34px; }
+.ai-hunk { display: flex; align-items: flex-start; cursor: pointer; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); opacity: .55; }
+.ai-hunk.on { opacity: 1; }
+.ai-hunk input { margin: 4px 0 0 10px; flex: none; }
+.ai-hunk-body { flex: 1; min-width: 0; }
+.ai-hunk .ai-line { padding-left: 8px; }
+.ai-line.del { background: rgba(220, 60, 60, .10); text-decoration: line-through; text-decoration-color: rgba(220, 60, 60, .5); }
+.ai-line.add { background: rgba(40, 160, 80, .12); }
+.ai-hunk:not(.on) .ai-line.add { text-decoration: line-through; }
+.ai-hunk:not(.on) .ai-line.del { text-decoration: none; }
+.ai-line mark { background: rgba(255, 200, 0, .45); }
+.ai-remaining { margin-right: auto; }

@@ -89,6 +89,12 @@ CREATE TABLE IF NOT EXISTS page_aliases (
   page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   PRIMARY KEY (wiki_id, name)
 );
+CREATE TABLE IF NOT EXISTS ai_usage (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  day TEXT NOT NULL,
+  count INTEGER NOT NULL,
+  PRIMARY KEY (user_id, day)
+);
 CREATE TABLE IF NOT EXISTS page_revisions (
   page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   version INTEGER NOT NULL,
@@ -111,6 +117,8 @@ function migrate(db: DB) {
   // URL identifier: /w/<slug>. Old slugs stay in wiki_slug_aliases so links keep working.
   if (!cols.includes('slug')) db.exec('ALTER TABLE wikis ADD COLUMN slug TEXT')
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS wikis_slug ON wikis(slug)')
+  // AI suggestions send page text to an external API, so each wiki opts in (owner).
+  if (!cols.includes('ai_enabled')) db.exec('ALTER TABLE wikis ADD COLUMN ai_enabled INTEGER NOT NULL DEFAULT 0')
   for (const w of db.prepare('SELECT id FROM wikis WHERE slug IS NULL').all() as { id: string }[]) {
     db.prepare('UPDATE wikis SET slug = ? WHERE id = ?').run(`w-${w.id.replace(/-/g, '').slice(0, 8)}`, w.id)
   }

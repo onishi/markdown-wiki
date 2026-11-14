@@ -39,6 +39,9 @@ export interface WikiSummary {
   /** Page shown at /w/:wid (null: the page list). */
   topPageId?: string | null
   topPage?: string | null
+  /** AI suggestions: enabled for this wiki by its owner / configured on the server. */
+  aiEnabled?: boolean
+  aiAvailable?: boolean
   pageCount?: number
   memberCount?: number
 }

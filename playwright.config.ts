@@ -18,7 +18,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: `PORT=${API_PORT} APP_ORIGIN=http://localhost:${WEB_PORT} DEV_LOGIN=1 DATABASE_PATH=:memory: npx tsx server/index.ts`,
+      command: `PORT=${API_PORT} APP_ORIGIN=http://localhost:${WEB_PORT} DEV_LOGIN=1 AI_FAKE=1 DATABASE_PATH=:memory: npx tsx server/index.ts`,
       port: API_PORT,
       reuseExistingServer: false,
     },

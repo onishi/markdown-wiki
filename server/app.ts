@@ -16,6 +16,7 @@ import {
 } from './auth.js'
 import { normalizePageName, validatePageName } from '../shared/pageName.js'
 import { matchesAll, searchTerms, snippet } from '../shared/search.js'
+import { isAiPreset, type Reviser } from './ai.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
 import { extractWikiTargets, rewriteWikiLinks } from '../shared/markdown/wikilinks.js'
 
@@ -30,6 +31,8 @@ export interface AppConfig {
   devLogin: boolean
   secureCookies: boolean
   fetchImpl?: typeof fetch
+  /** AI editing suggestions (unset: the feature is unavailable). */
+  ai?: Reviser
 }
 
 type Env = { Variables: { user: User } }
@@ -38,6 +41,9 @@ type Env = { Variables: { user: User } }
 // so keep the UTF-8 size below that (≤ 3 bytes per UTF-16 unit).
 const MAX_CONTENT = 600_000
 const MAX_FILE = 10 * 1024 * 1024
+/** AI suggestions: target size (the model returns it whole) and requests per user per day. */
+const AI_MAX_TARGET = 30_000
+const AI_DAILY_LIMIT = 100
 /** Rows are capped at 2 MB on Durable Objects: files are stored in 1 MB chunks. */
 const CHUNK = 1024 * 1024
 
@@ -257,14 +263,14 @@ export function createApp(db: DB, cfg: AppConfig) {
   app.get('/api/wikis/:wid', (c) => {
     const { wikiId, role } = need(c, 'viewer')
     const w = db
-      .prepare('SELECT w.id, w.slug, w.name, p.id AS topPageId, p.name AS topPage FROM wikis w LEFT JOIN pages p ON p.id = w.top_page_id WHERE w.id = ?')
-      .get(wikiId) as object
-    return c.json({ wiki: { ...w, role } })
+      .prepare('SELECT w.id, w.slug, w.name, w.ai_enabled AS aiEnabled, p.id AS topPageId, p.name AS topPage FROM wikis w LEFT JOIN pages p ON p.id = w.top_page_id WHERE w.id = ?')
+      .get(wikiId) as { aiEnabled: number }
+    return c.json({ wiki: { ...w, aiEnabled: !!w.aiEnabled, aiAvailable: !!cfg.ai, role } })
   })
 
   app.patch('/api/wikis/:wid', async (c) => {
     const { wikiId } = need(c, 'owner')
-    const b = await body<{ name?: string; slug?: string; topPageId?: string | null }>(c)
+    const b = await body<{ name?: string; slug?: string; topPageId?: string | null; aiEnabled?: boolean }>(c)
     // Validate everything first so a rejected request changes nothing.
     const name = b.name?.trim()
     if (name !== undefined && (!name || name.length > 100)) return c.json({ error: 'invalid_name' }, 400)
@@ -277,6 +283,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     tx(db, () => {
       if (name !== undefined) db.prepare('UPDATE wikis SET name = ? WHERE id = ?').run(name, wikiId)
       if (b.topPageId !== undefined) db.prepare('UPDATE wikis SET top_page_id = ? WHERE id = ?').run(b.topPageId, wikiId)
+      if (typeof b.aiEnabled === 'boolean') db.prepare('UPDATE wikis SET ai_enabled = ? WHERE id = ?').run(b.aiEnabled ? 1 : 0, wikiId)
       const old = (db.prepare('SELECT slug FROM wikis WHERE id = ?').get(wikiId) as { slug: string }).slug
       if (slug !== undefined && slug !== old) {
         // The old slug keeps redirecting; reclaiming one of this wiki's former slugs is allowed.
@@ -508,6 +515,50 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (result.status === 404) return c.json({ error: 'not_found' }, 404)
     if (result.status === 409) return c.json({ error: 'conflict', current: result.current, base: result.base }, 409)
     return c.json({ page: result.page })
+  })
+
+  /**
+   * AI suggestion for part of a page.  The client sends its current text (it may hold
+   * unsaved edits); nothing is stored: accepting the suggestion is an ordinary edit.
+   */
+  app.post('/api/wikis/:wid/pages/:pid/ai/revise', async (c) => {
+    const { wikiId } = need(c, 'editor')
+    if (!cfg.ai) return c.json({ error: 'ai_unavailable' }, 503)
+    const w = db.prepare('SELECT name, ai_enabled FROM wikis WHERE id = ?').get(wikiId) as { name: string; ai_enabled: number }
+    if (!w.ai_enabled) return c.json({ error: 'ai_disabled' }, 403)
+    const page = db.prepare('SELECT name FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, c.req.param('pid')) as { name: string } | undefined
+    if (!page) return c.json({ error: 'not_found' }, 404)
+    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; instruction?: string }>(c)
+    const content = b.content
+    if (typeof content !== 'string' || content.length > MAX_CONTENT) return c.json({ error: 'invalid' }, 400)
+    const start = b.start ?? 0
+    const end = b.end ?? content.length
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > content.length || start >= end) return c.json({ error: 'invalid_range' }, 400)
+    if (end - start > AI_MAX_TARGET) return c.json({ error: 'too_large' }, 413)
+    const preset = b.preset ?? 'auto'
+    if (!isAiPreset(preset)) return c.json({ error: 'invalid_preset' }, 400)
+    const instruction = typeof b.instruction === 'string' ? b.instruction.slice(0, 2000) : ''
+
+    const uid = c.get('user').id
+    const day = new Date().toISOString().slice(0, 10)
+    const used = (db.prepare('SELECT count FROM ai_usage WHERE user_id = ? AND day = ?').get(uid, day) as { count: number } | undefined)?.count ?? 0
+    if (used >= AI_DAILY_LIMIT) return c.json({ error: 'rate_limited', limit: AI_DAILY_LIMIT }, 429)
+    db.prepare('INSERT INTO ai_usage (user_id, day, count) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1').run(uid, day)
+    db.prepare('DELETE FROM ai_usage WHERE day < ?').run(new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10))
+
+    const target = content.slice(start, end)
+    let r
+    try {
+      r = await cfg.ai({ wikiName: w.name, pageName: page.name, page: content, start, end, preset, instruction })
+    } catch (e) {
+      console.error('ai revise failed', e)
+      return c.json({ error: 'ai_failed' }, 502)
+    }
+    // Keep the target's trailing-newline shape so the splice stays clean.
+    let revised = r.revised.replace(/\r\n?/g, '\n')
+    const trail = (t: string) => /\n*$/.exec(t)![0]
+    revised = revised.replace(/\n*$/, '') + trail(target)
+    return c.json({ revised, summary: r.summary, remaining: AI_DAILY_LIMIT - used - 1 })
   })
 
   app.post('/api/wikis/:wid/pages/:pid/rename', async (c) => {
