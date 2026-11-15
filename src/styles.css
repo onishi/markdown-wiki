@@ -504,3 +504,5 @@ mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0 1px; 
 @media (prefers-reduced-motion: reduce) { .ai-spinner { animation-duration: 2.4s; } }
 .ai-progress-summary { margin: 8px 0 0; color: var(--fg-muted); }
 .ai-progress-text { margin: 8px 0 0; max-height: 30vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+.ai-related { margin: -4px 0 0; }
+.ai-hint + .check-row { margin-top: 10px; }

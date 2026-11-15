@@ -99,6 +99,8 @@ interface AiAnswer {
   revised: string;
   summary: string;
   sources?: { uri: string; title?: string }[];
+  /** Wiki pages sent as background. */
+  related?: string[];
   remaining: number;
 }
 
@@ -153,7 +155,7 @@ type Phase =
   | { kind: "ask" }
   /** `text`: the model's answer so far (streamed), `started`: when the request was sent. */
   | { kind: "loading"; text: string; started: number }
-  | { kind: "review"; segments: Segment[]; summary: string; remaining: number }
+  | { kind: "review"; segments: Segment[]; summary: string; related: string[]; remaining: number }
   | { kind: "error"; message: string };
 
 /** While the model writes: elapsed time and the revised text so far. */
@@ -229,6 +231,19 @@ export function AiDialog({
       localStorage.setItem("mw:aiWeb", on ? "1" : "0");
     } catch {}
   };
+  const [wikiCtx, setWikiCtx] = useState(() => {
+    try {
+      return localStorage.getItem("mw:aiWiki") !== "0";
+    } catch {
+      return true;
+    }
+  });
+  const toggleWikiCtx = (on: boolean) => {
+    setWikiCtx(on);
+    try {
+      localStorage.setItem("mw:aiWiki", on ? "1" : "0");
+    } catch {}
+  };
   const [phase, setPhase] = useState<Phase>({ kind: "ask" });
   const [accepted, setAccepted] = useState<Set<number>>(new Set());
   const compEnd = useRef(-1e9);
@@ -268,6 +283,7 @@ export function AiDialog({
           volume: volumeOff ? "auto" : volume,
           instruction,
           web: useWeb,
+          wiki: wikiCtx,
         },
         (text) => {
           if (id === reqId.current) setPhase((p) => (p.kind === "loading" ? { ...p, text } : p));
@@ -281,6 +297,7 @@ export function AiDialog({
         kind: "review",
         segments,
         summary: r.summary,
+        related: r.related ?? [],
         remaining: r.remaining,
       });
     } catch (e) {
@@ -435,6 +452,11 @@ export function AiDialog({
               <div className="ai-label">調べる</div>
               <div>
                 <label className="check-row">
+                  <input type="checkbox" checked={wikiCtx} onChange={(e) => toggleWikiCtx(e.target.checked)} data-testid="ai-wiki" />
+                  wiki 内の関連ページ
+                </label>
+                <div className="ai-hint">リンク先・リンク元・親ページを参考にし、内容が食い違わないようにします。</div>
+                <label className="check-row">
                   <input
                     type="checkbox"
                     checked={useWeb}
@@ -474,7 +496,7 @@ export function AiDialog({
             )}
             {phase.kind === "loading" && <AiProgress text={phase.text} started={phase.started} web={useWeb} />}
             <p className="ai-privacy">
-              対象（とページ全体の文脈）が Google の Gemini に送られます
+              対象（とページ全体の文脈{wikiCtx && "、関連ページ"}）が Google の Gemini に送られます
               {useWeb && "。ページの内容をもとに Google 検索も行われます"}
               。提案は保存されず、採用した変更だけが通常の編集として保存されます。
             </p>
@@ -505,6 +527,11 @@ export function AiDialog({
             {phase.summary && (
               <p className="ai-summary" data-testid="ai-summary">
                 {phase.summary}
+              </p>
+            )}
+            {phase.related.length > 0 && (
+              <p className="ai-related muted small" data-testid="ai-related">
+                参考にしたページ: {phase.related.map((n) => `「${n}」`).join("")}
               </p>
             )}
             {hunks.length === 0 ? (

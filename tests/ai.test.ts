@@ -162,11 +162,44 @@ describe('AI revise API', () => {
     const lines = await read(ok)
     expect(lines[0]).toEqual({ text: '<summary>s</summary>\n<revised>\nAB' })
     expect(lines.at(-2)).toEqual({ text: '<summary>s</summary>\n<revised>\nABC\n</revised>' })
-    expect(lines.at(-1)).toEqual({ done: { revised: 'ABC\n', summary: 's', sources: [], remaining: 99 } })
+    expect(lines.at(-1)).toEqual({ done: { revised: 'ABC\n', summary: 's', sources: [], related: [], remaining: 99 } })
     fail = true
     expect((await read(await call(url, { content: 'abc\n', stream: true }))).at(-1)).toEqual({ error: 'ai_failed' })
     // validation errors still come as plain JSON
     expect((await call(url, { content: 'abc', start: 2, end: 9, stream: true })).status).toBe(400)
+  })
+
+  it('sends linked, parent and linking pages as background when asked', async () => {
+    const seen: ReviseRequest[] = []
+    const { login } = await setup(async (r) => (seen.push(r), { revised: 'x', summary: '' }))
+    const o = await login('o@example.com')
+    const w = (await o('POST', '/api/wikis', { name: 'W' })).json.wiki
+    await o('PATCH', `/api/wikis/${w.id}`, { aiEnabled: true })
+    const mk = async (name: string, content: string) => (await o('POST', `/api/wikis/${w.id}/pages`, { name, content })).json.page
+    await mk('開発', '開発の親ページ')
+    await mk('用語集', 'トークン: 1 時間で失効')
+    const old = await mk('旧名', 'リネームされる')
+    await o('POST', `/api/wikis/${w.id}/pages/${old.id}/rename`, { name: '新名' })
+    await mk('空', '')
+    const p = await mk('開発/認証', 'see [[用語集]] [[旧名]] [[空]] [[ない]]')
+    await mk('索引', '- [[開発/認証]]')
+    await mk('無関係', 'nothing')
+    const url = `/api/wikis/${w.id}/pages/${p.id}/ai/revise`
+    // links are taken from the client's (possibly unsaved) text
+    const r = await o('POST', url, { content: 'see [[用語集]] [[旧名]] [[空]] [[ない]] [[開発/認証]]', wiki: true })
+    expect(r.json.related).toEqual(['用語集', '新名', '開発', '索引'])
+    expect(seen[0].related!.map((x) => [x.name, x.relation])).toEqual([
+      ['用語集', 'このページからのリンク先'],
+      ['新名', 'このページからのリンク先'],
+      ['開発', '親ページ'],
+      ['索引', 'このページへリンクしているページ'],
+    ])
+    const prompt = buildPrompt(seen[0])
+    expect(prompt).toContain('【wiki 内の関連ページ】')
+    expect(prompt).toContain('<related name="用語集" relation="このページからのリンク先">\nトークン: 1 時間で失効\n</related>')
+    // off unless asked
+    expect((await o('POST', url, { content: 'see [[用語集]]' })).json.related).toEqual([])
+    expect(buildPrompt(seen[1])).not.toContain('関連ページ】')
   })
 
   it('reports when no API key is configured and when the model fails', async () => {

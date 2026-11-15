@@ -560,11 +560,13 @@ test('AI suggestions: owner opts in, review the diff, adopt some changes, undo',
   await expect(page.getByTestId('ai-summary')).toBeVisible()
   await page.getByRole('button', { name: '採用しない' }).click()
 
-  // an empty page: write it from the title
-  await newPage(page, 'Empty')
+  // an empty page: write it from the title; its parent page is sent as background
+  await newPage(page, 'Doc/Empty')
   await page.getByTestId('ai-button').click()
   await expect(page.getByTestId('ai-blank')).toContainText('空のページ')
+  await expect(page.getByTestId('ai-wiki')).toBeChecked()
   await page.getByTestId('ai-run').click()
+  await expect(page.getByTestId('ai-related')).toHaveText('参考にしたページ: 「Doc」')
   await expect(page.getByTestId('ai-hunk').first().locator('.ai-line.del')).toHaveCount(0)
   await page.getByTestId('ai-apply').click()
   await expect(page.getByTestId('doc')).toContainText('AI 追記')
@@ -573,7 +575,7 @@ test('AI suggestions: owner opts in, review the diff, adopt some changes, undo',
   // recent changes: the adopted suggestion is marked, and the diff opens inline
   await page.getByTestId('recent-changes').click()
   const first = page.getByTestId('changes').locator('.changes-list > li').first()
-  await expect(first.locator('.change-page')).toHaveText('Empty')
+  await expect(first.locator('.change-page')).toHaveText('Doc/Empty')
   await expect(first.locator('.tag-new')).toBeVisible()
   await expect(first.locator('.tag-ai')).toHaveText('AI の提案')
   await first.getByTestId('change-diff').click()

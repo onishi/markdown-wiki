@@ -14,9 +14,9 @@ import {
   sessionUser,
   upsertGoogleUser,
 } from './auth.js'
-import { normalizePageName, validatePageName } from '../shared/pageName.js'
+import { normalizePageName, parentName, validatePageName } from '../shared/pageName.js'
 import { matchesAll, searchTerms, snippet } from '../shared/search.js'
-import { AI_NEEDS_WEB, isAiPreset, isAiVolume, type Reviser } from './ai.js'
+import { AI_NEEDS_WEB, isAiPreset, isAiVolume, type RelatedPage, type Reviser } from './ai.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
 import { extractWikiTargets, rewriteWikiLinks } from '../shared/markdown/wikilinks.js'
 import { diffHunks, groupChanges } from '../shared/diff.js'
@@ -45,6 +45,10 @@ const MAX_FILE = 10 * 1024 * 1024
 /** AI suggestions: target size (the model returns it whole) and requests per user per day. */
 const AI_MAX_TARGET = 30_000
 const AI_DAILY_LIMIT = 100
+/** Related pages sent as background: how many, and characters each / in total. */
+const AI_RELATED_PAGES = 6
+const AI_RELATED_EACH = 4000
+const AI_RELATED_TOTAL = 15_000
 /** Rows are capped at 2 MB on Durable Objects: files are stored in 1 MB chunks. */
 const CHUNK = 1024 * 1024
 
@@ -420,18 +424,50 @@ export function createApp(db: DB, cfg: AppConfig) {
     const pid = c.req.param('pid')
     const page = db.prepare('SELECT name FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, pid) as { name: string } | undefined
     if (!page) return c.json({ error: 'not_found' }, 404)
-    const aliases = (db.prepare('SELECT name FROM page_aliases WHERE wiki_id = ? AND page_id = ?').all(wikiId, pid) as { name: string }[]).map((a) => a.name)
-    const names = new Set([page.name, ...aliases])
-    const rows = db
-      .prepare("SELECT id, name, content, updated_at AS updatedAt FROM pages WHERE wiki_id = ? AND id != ? AND instr(content, '[[') > 0")
-      .all(wikiId, pid) as { id: string; name: string; content: string; updatedAt: number }[]
-    const pages = rows
-      .filter((r) => [...names].some((n) => r.content.includes(n.split('/').pop()!)))
-      .filter((r) => extractWikiTargets(r.content).some((t) => names.has(normalizePageName(t))))
+    const pages = backlinkRows(wikiId, pid, page.name)
       .map((r) => ({ id: r.id, name: r.name, updatedAt: r.updatedAt }))
       .sort((a, b) => a.name.localeCompare(b.name, 'ja'))
     return c.json({ pages })
   })
+
+  function backlinkRows(wikiId: string, pid: string, pageName: string) {
+    const aliases = (db.prepare('SELECT name FROM page_aliases WHERE wiki_id = ? AND page_id = ?').all(wikiId, pid) as { name: string }[]).map((a) => a.name)
+    const names = new Set([pageName, ...aliases])
+    const rows = db
+      .prepare("SELECT id, name, content, updated_at AS updatedAt FROM pages WHERE wiki_id = ? AND id != ? AND instr(content, '[[') > 0")
+      .all(wikiId, pid) as { id: string; name: string; content: string; updatedAt: number }[]
+    return rows
+      .filter((r) => [...names].some((n) => r.content.includes(n.split('/').pop()!)))
+      .filter((r) => extractWikiTargets(r.content).some((t) => names.has(normalizePageName(t))))
+  }
+
+  /**
+   * Background for AI suggestions: pages this one links to (from the text being edited),
+   * pages linking here, and the parent page.  Capped in count and size.
+   */
+  function relatedPages(wikiId: string, pid: string, pageName: string, content: string): RelatedPage[] {
+    const out: RelatedPage[] = []
+    const seen = new Set([pid])
+    let budget = AI_RELATED_TOTAL
+    const add = (row: { id: string; name: string; content: string } | undefined, relation: string) => {
+      if (!row || seen.has(row.id) || out.length >= AI_RELATED_PAGES || budget <= 0 || !row.content.trim()) return
+      seen.add(row.id)
+      let text = row.content.slice(0, Math.min(AI_RELATED_EACH, budget))
+      if (text.length < row.content.length) text += '\n…（以下省略）'
+      budget -= text.length
+      out.push({ name: row.name, relation, content: text })
+    }
+    const byName = (name: string) =>
+      (db.prepare('SELECT id, name, content FROM pages WHERE wiki_id = ? AND name = ?').get(wikiId, name) ??
+        db.prepare('SELECT p.id, p.name, p.content FROM page_aliases a JOIN pages p ON p.id = a.page_id WHERE a.wiki_id = ? AND a.name = ?').get(wikiId, name)) as
+        | { id: string; name: string; content: string }
+        | undefined
+    for (const t of extractWikiTargets(content).slice(0, 20)) if (out.length < 4) add(byName(normalizePageName(t)), 'このページからのリンク先')
+    const parent = parentName(pageName)
+    if (parent) add(byName(parent), '親ページ')
+    for (const r of backlinkRows(wikiId, pid, pageName).sort((a, b) => b.updatedAt - a.updatedAt)) add(r, 'このページへリンクしているページ')
+    return out
+  }
 
   app.get('/api/wikis/:wid/pages/:pid', (c) => {
     const { wikiId } = need(c, 'viewer')
@@ -587,7 +623,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (!w.ai_enabled) return c.json({ error: 'ai_disabled' }, 403)
     const page = db.prepare('SELECT name FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, c.req.param('pid')) as { name: string } | undefined
     if (!page) return c.json({ error: 'not_found' }, 404)
-    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; volume?: string; instruction?: string; web?: boolean; stream?: boolean }>(c)
+    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; volume?: string; instruction?: string; web?: boolean; wiki?: boolean; stream?: boolean }>(c)
     const content = b.content
     if (typeof content !== 'string' || content.length > MAX_CONTENT) return c.json({ error: 'invalid' }, 400)
     const start = b.start ?? 0
@@ -608,7 +644,8 @@ export function createApp(db: DB, cfg: AppConfig) {
     db.prepare('DELETE FROM ai_usage WHERE day < ?').run(new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10))
 
     const target = content.slice(start, end)
-    const req = { wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: b.web === true || AI_NEEDS_WEB.has(preset) }
+    const related = b.wiki === true ? relatedPages(wikiId, c.req.param('pid')!, page.name, content) : []
+    const req = { wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: b.web === true || AI_NEEDS_WEB.has(preset), related }
     const remaining = AI_DAILY_LIMIT - used - 1
     const finish = (r: Awaited<ReturnType<Reviser>>) => {
       // Keep the target's trailing-newline shape so the splice stays clean.
@@ -617,7 +654,7 @@ export function createApp(db: DB, cfg: AppConfig) {
       revised = revised.replace(/\n*$/, '') + trail(target)
       // Only plain web links reach the client (they may be pasted into the page).
       const sources = (r.sources ?? []).filter((s) => /^https?:\/\//.test(s.uri)).map((s) => ({ uri: s.uri, title: s.title?.slice(0, 200) }))
-      return { revised, summary: r.summary, sources, remaining }
+      return { revised, summary: r.summary, sources, related: related.map((p) => p.name), remaining }
     }
     const ai = cfg.ai
 

@@ -50,6 +50,14 @@ export interface ReviseRequest {
   instruction: string
   /** Let the model look things up with Google Search (grounding). */
   web?: boolean
+  /** Other pages of the wiki given as background (links, backlinks, parent). */
+  related?: RelatedPage[]
+}
+export interface RelatedPage {
+  name: string
+  /** How it relates to this page, in words for the prompt (e.g. "このページからのリンク先"). */
+  relation: string
+  content: string
 }
 export interface AiSource {
   uri: string
@@ -67,7 +75,8 @@ export type Reviser = (r: ReviseRequest, onText?: (soFar: string) => void) => Pr
 const COMMON_RULES = `- 書き換えるのは「対象」だけです。返す revised は、書き換え後の「対象」部分の全文です（ページ全体ではありません。対象の外の文章を含めないでください）。
 - 指示に関係しない箇所は一字一句変えないでください。好みで言い回しを変えないでください。
 - 文体（です・ます／である）、用語、表記は元の文章に合わせてください。
-- Markdown の構造を保ってください。[[ページ名]] や [[ページ名|表示名]] の wiki リンク、URL、画像、コードブロックの中身は変えないでください。`
+- Markdown の構造を保ってください。[[ページ名]] や [[ページ名|表示名]] の wiki リンク、URL、画像、コードブロックの中身は変えないでください。
+- 【wiki 内の関連ページ】があれば、その内容と矛盾しないようにしてください。関連ページに書かれている事実は、本文の事実と同じように使ってかまいません。関連ページへのリンクを足すときは、示されたページ名をそのまま使って [[ページ名]] と書いてください。`
 
 /**
  * The answer comes in tags rather than JSON: it streams (the revised text can be shown
@@ -84,8 +93,8 @@ const SYSTEM = `あなたはチームで使う Markdown wiki の編集を手伝�
 
 【ルール】
 ${COMMON_RULES}
-- 本文に書かれていない事実・数値・固有名詞を作らないでください。推測で補わないでください。ただし対象が空で本文を新しく書くときは、確実に知っている事実だけを書き、不確かな数値・日付・固有名詞は「(TBD)」としてください。
-- 本文にない URL、[[リンク]]、コマンド、設定値を新しく作らないでください。
+- 本文（と関連ページ）に書かれていない事実・数値・固有名詞を作らないでください。推測で補わないでください。ただし対象が空で本文を新しく書くときは、確実に知っている事実だけを書き、不確かな数値・日付・固有名詞は「(TBD)」としてください。
+- 本文にない URL、コマンド、設定値、関連ページ以外への [[リンク]] を新しく作らないでください。
 - 変更が不要なら revised に対象をそのまま入れ、summary にその旨を書いてください。
 
 ${FORMAT('何をどう変えたか（日本語 1〜2 文）')}`
@@ -95,9 +104,9 @@ const SYSTEM_WEB = `あなたはチームで使う Markdown wiki の編集を手
 
 【ルール】
 ${COMMON_RULES}
-- 本文にない事実・数値・固有名詞は、Google 検索の結果で確認できたものだけを追加してください。確認できないことは書かず、推測で補わないでください。「(TBD)」は検索で確認できた場合だけ埋めてください。
+- 本文と関連ページにない事実・数値・固有名詞は、Google 検索の結果で確認できたものだけを追加してください。確認できないことは書かず、推測で補わないでください。「(TBD)」は検索で確認できた場合だけ埋めてください。
 - ページタイトル（主題）について調べてください。同名の別のものと取り違えないでください。
-- 本文に URL や出典は書かないでください（出典は別に表示されます）。本文にない [[リンク]]、コマンド、設定値も作らないでください。
+- 本文に URL や出典は書かないでください（出典は別に表示されます）。本文にないコマンド、設定値、関連ページ以外への [[リンク]] も作らないでください。
 
 ${FORMAT('何をどう変えたか（日本語 1〜2 文。検索で確認した内容を足した場合はそのことも）')}`
 
@@ -148,9 +157,15 @@ export function buildPrompt(r: ReviseRequest): string {
     AI_PRESETS[r.preset], AI_VOLUMES[r.volume ?? 'auto'], r.instruction.trim() && `追加の指示: ${r.instruction.trim()}`]
     .filter(Boolean)
     .join('\n')
+  const related = r.related?.length
+    ? `【wiki 内の関連ページ】（参考資料。書き換えるのは対象だけです）
+${r.related.map((p) => `<related name="${p.name.replace(/"/g, '&quot;')}" relation="${p.relation}">\n${p.content.replace(/<\/related>/g, '<\\/related>')}\n</related>`).join('\n')}
+
+`
+    : ''
   return `${pageInfo(r.wikiName, r.pageName)}
 
-【指示】
+${related}【指示】
 ${task}
 
 ${
