@@ -7,6 +7,13 @@ import { createApp } from '../server/app'
 import type { Reviser, ReviseRequest } from '../server/ai'
 
 describe('hunks', () => {
+  it('treats an empty text as no lines', () => {
+    const segs = diffHunks('', '## A\n\nb')
+    expect(segs).toEqual([{ id: 0, del: [], add: ['## A', '', 'b'] }])
+    expect(applyHunks(segs, new Set())).toBe('')
+    expect(applyHunks(segs, new Set([0]))).toBe('## A\n\nb')
+  })
+
   const a = 'title\nkeep\nold one\nkeep2\nold two'
   const b = 'title\nkeep\nnew one\nkeep2\nnew two\nadded'
   it('splits changes and applies any subset', () => {
@@ -43,6 +50,10 @@ describe('prompt', () => {
     const deep = buildPrompt({ wikiName: 'W', pageName: '開発/API/認証', page, start: 0, end: page.length, preset: 'auto', instruction: '' })
     expect(deep).toContain('- 階層: 「開発」 > 「API」 > 「認証」（「開発/API」の下にある「認証」のページ）')
     expect(deep).toContain('主題は「認証」')
+    const blank = buildPrompt({ wikiName: 'W', pageName: 'P', page: '', start: 0, end: 0, preset: 'auto', instruction: '' })
+    expect(blank).toContain('ページは空です')
+    expect(blank).toContain('<target>\n</target>')
+    expect(whole).not.toContain('ページは空です')
   })
 })
 
@@ -108,6 +119,10 @@ describe('AI revise API', () => {
     expect(seen[0]).toMatchObject({ wikiName: 'W', pageName: 'P', start: 5, end: 8, preset: 'typo', volume: 'auto', instruction: 'x' })
 
     expect((await owner('POST', url, { content: 'abc', start: 2, end: 9 })).status).toBe(400)
+    expect((await owner('POST', url, { content: 'abc', start: 1, end: 1 })).status).toBe(400) // empty range in a non-empty page
+    // an empty page: write from the title
+    expect((await owner('POST', url, { content: '' })).status).toBe(200)
+    expect(seen[seen.length - 1]).toMatchObject({ page: '', start: 0, end: 0 })
     expect((await owner('POST', url, { content: 'abc', preset: 'nope' })).status).toBe(400)
     expect((await owner('POST', url, { content: 'abc', volume: 'huge' })).json).toEqual({ error: 'invalid_volume' })
 

@@ -533,7 +533,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (typeof content !== 'string' || content.length > MAX_CONTENT) return c.json({ error: 'invalid' }, 400)
     const start = b.start ?? 0
     const end = b.end ?? content.length
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > content.length || start >= end) return c.json({ error: 'invalid_range' }, 400)
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > content.length || start > end || (start === end && content.trim() !== '')) return c.json({ error: 'invalid_range' }, 400)
     if (end - start > AI_MAX_TARGET) return c.json({ error: 'too_large' }, 413)
     const preset = b.preset ?? 'auto'
     if (!isAiPreset(preset)) return c.json({ error: 'invalid_preset' }, 400)

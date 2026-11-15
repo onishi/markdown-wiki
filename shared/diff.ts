@@ -74,7 +74,9 @@ export type Segment = { same: string[] } | Hunk
 export function diffHunks(before: string, after: string): Segment[] {
   const out: Segment[] = []
   let id = 0
-  for (const part of diffComm(before.split('\n'), after.split('\n')) as { common?: string[]; buffer1?: string[]; buffer2?: string[] }[]) {
+  // An empty text has no lines (not one empty line), so writing into an empty page is a pure addition.
+  const lines = (t: string) => (t === '' ? [] : t.split('\n'))
+  for (const part of diffComm(lines(before), lines(after)) as { common?: string[]; buffer1?: string[]; buffer2?: string[] }[]) {
     if (part.common) out.push({ same: part.common })
     else out.push({ id: id++, del: part.buffer1 ?? [], add: part.buffer2 ?? [] })
   }

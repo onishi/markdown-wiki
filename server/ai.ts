@@ -73,7 +73,7 @@ const SYSTEM = `あなたはチームで使う Markdown wiki の編集を手伝�
 
 【ルール】
 ${COMMON_RULES}
-- 本文に書かれていない事実・数値・固有名詞を作らないでください。推測で補わないでください。
+- 本文に書かれていない事実・数値・固有名詞を作らないでください。推測で補わないでください。ただし対象が空で本文を新しく書くときは、確実に知っている事実だけを書き、不確かな数値・日付・固有名詞は「(TBD)」としてください。
 - 本文にない URL、[[リンク]]、コマンド、設定値を新しく作らないでください。
 - summary には、何をどう変えたかを日本語 1〜2 文で書いてください。変更が不要なら revised に対象をそのまま入れ、summary にその旨を書いてください。`
 
@@ -134,7 +134,10 @@ export function pageInfo(wikiName: string, pageName: string): string {
 export function buildPrompt(r: ReviseRequest): string {
   const whole = r.start === 0 && r.end === r.page.length
   const target = r.page.slice(r.start, r.end)
-  const task = [AI_PRESETS[r.preset], AI_VOLUMES[r.volume ?? 'auto'], r.instruction.trim() && `追加の指示: ${r.instruction.trim()}`]
+  const blank = target.trim() === ''
+  const task = [
+    blank && 'ページは空です。ページタイトル（主題）について、以下の指示に沿って本文を新しく書いてください。見出しは「##」から始め、タイトルの見出しは付けないでください。',
+    AI_PRESETS[r.preset], AI_VOLUMES[r.volume ?? 'auto'], r.instruction.trim() && `追加の指示: ${r.instruction.trim()}`]
     .filter(Boolean)
     .join('\n')
   return `${pageInfo(r.wikiName, r.pageName)}
@@ -143,7 +146,11 @@ export function buildPrompt(r: ReviseRequest): string {
 ${task}
 
 ${
-  whole
+  blank
+    ? `【対象】（空のページ。書いた本文全体を revised として返してください）
+<target>
+</target>`
+    : whole
     ? `【対象】（ページ全体）
 <target>
 ${target}

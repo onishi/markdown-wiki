@@ -440,6 +440,7 @@ mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0 1px; 
 .ai-dialog { display: flex; flex-direction: column; gap: 10px; }
 .ai-form { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 14px 14px; align-items: start; }
 .ai-label { font-size: 13px; font-weight: 600; color: var(--fg-muted); padding-top: 6px; }
+.ai-target-note { font-size: 14px; padding-top: 5px; }
 .ai-hint { font-size: 12.5px; color: var(--fg-muted); margin-top: 6px; }
 .ai-group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .ai-group + .ai-group { margin-top: 6px; }

@@ -311,6 +311,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
         <AiDialog
           wikiId={wiki.id}
           pageId={page.id}
+          pageName={page.name}
           content={ai.content}
           selection={ai.selection}
           onClose={() => {

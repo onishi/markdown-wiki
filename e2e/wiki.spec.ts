@@ -545,6 +545,16 @@ test('AI suggestions: owner opts in, review the diff, adopt some changes, undo',
   await expect(page.getByTestId('ai-summary')).toHaveText('テスト用の提案（factcheck, web）')
   await expect(page.getByTestId('ai-hunk').last()).toHaveText(/^\s*出典:\s*- \[example\.com\]/) // sources: a hunk of their own
   await page.getByRole('button', { name: '採用しない' }).click()
+
+  // an empty page: write it from the title
+  await newPage(page, 'Empty')
+  await page.getByTestId('ai-button').click()
+  await expect(page.getByTestId('ai-blank')).toContainText('空のページ')
+  await page.getByTestId('ai-run').click()
+  await expect(page.getByTestId('ai-hunk').first().locator('.ai-line.del')).toHaveCount(0)
+  await page.getByTestId('ai-apply').click()
+  await expect(page.getByTestId('doc')).toContainText('AI 追記')
+  await saved(page)
   await page.context().close()
 })
 
