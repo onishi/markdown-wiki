@@ -9,6 +9,7 @@ import {
 } from "../../shared/diff";
 import { Modal } from "./Modal";
 import { isImeKey } from "../editor/SourceEditor";
+import { applyLinks, type SuggestedLink } from "../../shared/markdown/wikilinks";
 
 const PRESET_GROUPS: {
   name: string;
@@ -72,6 +73,11 @@ const PRESET_GROUPS: {
         label: "リンクを張る",
         hint: "本文に出てくる、wiki にあるページの名前を [[リンク]] にします。",
       },
+      {
+        key: "keywords",
+        label: "特徴語をリンクに",
+        hint: "本文の特徴語（固有名詞・専門用語など）を [[リンク]] にします。まだないページへのリンクも作ります。1 語ずつ選べます。",
+      },
     ],
   },
 ];
@@ -79,9 +85,9 @@ const PRESETS = PRESET_GROUPS.flatMap((g) => g.items);
 /** Tasks that always look things up (the server forces web mode too). */
 const NEEDS_WEB = new Set(["factcheck"]);
 /** Tasks about the wiki itself, where searching the web is pointless (the server turns it off). */
-const NO_WEB = new Set(["links"]);
+const NO_WEB = new Set(["links", "keywords"]);
 /** Tasks where a target length means nothing. */
-const NO_VOLUME = new Set(["typo", "factcheck", "links"]);
+const NO_VOLUME = new Set(["typo", "factcheck", "links", "keywords"]);
 
 const VOLUMES: { key: string; label: string }[] = [
   { key: "auto", label: "おまかせ" },
@@ -110,7 +116,10 @@ interface AiAnswer {
   related?: string[];
   /** Uses left today (null: this answer did not use one). */
   remaining: number | null;
+  /** Linking tasks: each link to add, adopted one by one instead of by diff. */
+  links?: LinkSuggestion[];
 }
+type LinkSuggestion = SuggestedLink & { exists: boolean };
 
 /** What can be shown of a partial tagged answer (`<summary>…</summary><revised>…`). */
 export function partialAnswer(text: string): { summary: string; revised: string } {
@@ -163,7 +172,7 @@ type Phase =
   | { kind: "ask" }
   /** `text`: the model's answer so far (streamed), `started`: when the request was sent. */
   | { kind: "loading"; text: string; started: number }
-  | { kind: "review"; segments: Segment[]; summary: string; related: string[]; remaining: number | null }
+  | { kind: "review"; segments: Segment[]; links?: LinkSuggestion[]; summary: string; related: string[]; remaining: number | null }
   | { kind: "error"; message: string };
 
 /** While the model writes: elapsed time and the revised text so far. */
@@ -300,10 +309,17 @@ export function AiDialog({
       );
       if (id !== reqId.current) return;
       const segments = reviewSegments(target, r.revised, r.sources ?? []);
-      setAccepted(new Set(segments.flatMap((s) => ("id" in s ? [s.id] : []))));
+      setAccepted(
+        new Set(
+          r.links
+            ? r.links.map((_, i) => i)
+            : segments.flatMap((s) => ("id" in s ? [s.id] : [])),
+        ),
+      );
       setPhase({
         kind: "review",
         segments,
+        links: r.links,
         summary: r.summary,
         related: r.related ?? [],
         remaining: r.remaining,
@@ -322,15 +338,21 @@ export function AiDialog({
     }
   };
 
-  const hunks =
-    phase.kind === "review"
-      ? (phase.segments.filter((s) => "id" in s) as Hunk[])
-      : [];
+  const links = phase.kind === "review" ? phase.links : undefined;
+  /** What can be adopted: diff hunks, or for linking tasks each link (by index). */
+  const choices: number[] =
+    phase.kind !== "review"
+      ? []
+      : links
+        ? links.map((_, i) => i)
+        : (phase.segments.filter((s) => "id" in s) as Hunk[]).map((h) => h.id);
   const apply = () => {
     if (phase.kind !== "review") return;
     const next =
       content.slice(0, range.start) +
-      applyHunks(phase.segments, accepted) +
+      (links
+        ? applyLinks(target, links.filter((_, i) => accepted.has(i)))
+        : applyHunks(phase.segments, accepted)) +
       content.slice(range.end);
     onApply(next);
   };
@@ -544,15 +566,17 @@ export function AiDialog({
                 参考にしたページ: {phase.related.map((n) => `「${n}」`).join("")}
               </p>
             )}
-            {hunks.length === 0 ? (
+            {choices.length === 0 ? (
               <p className="muted">変更の提案はありませんでした。</p>
             ) : (
               <>
                 <div className="ai-bulk muted small">
-                  {hunks.length} か所の変更 · {accepted.size} か所を採用
+                  {links
+                    ? `${links.length} 語のリンク · ${accepted.size} 語を採用`
+                    : `${choices.length} か所の変更 · ${accepted.size} か所を採用`}
                   <button
                     className="link-btn"
-                    onClick={() => setAccepted(new Set(hunks.map((h) => h.id)))}
+                    onClick={() => setAccepted(new Set(choices))}
                   >
                     すべて選ぶ
                   </button>
@@ -563,11 +587,20 @@ export function AiDialog({
                     すべて外す
                   </button>
                 </div>
-                <ReviewDiff
-                  segments={phase.segments}
-                  accepted={accepted}
-                  onToggle={toggle}
-                />
+                {links ? (
+                  <LinkChoices
+                    text={target}
+                    links={links}
+                    accepted={accepted}
+                    onToggle={toggle}
+                  />
+                ) : (
+                  <ReviewDiff
+                    segments={phase.segments}
+                    accepted={accepted}
+                    onToggle={toggle}
+                  />
+                )}
               </>
             )}
             <div className="modal-actions">
@@ -590,7 +623,7 @@ export function AiDialog({
                 disabled={accepted.size === 0}
                 data-testid="ai-apply"
               >
-                選んだ変更を採用
+                {links ? "選んだリンクを採用" : "選んだ変更を採用"}
               </button>
             </div>
           </>
@@ -651,6 +684,64 @@ export function reviewSegments(
   }); // "\n\n出典:…" → ['', '出典:', '', '- …']
   if (k) segments.push({ same: new Array<string>(k).fill("") });
   return segments;
+}
+
+/** Each suggested link with a checkbox: the words around it, its page, and whether that page exists. */
+function LinkChoices({
+  text,
+  links,
+  accepted,
+  onToggle,
+}: {
+  text: string;
+  links: LinkSuggestion[];
+  accepted: Set<number>;
+  onToggle: (i: number) => void;
+}) {
+  const around = (l: LinkSuggestion) => {
+    const ls = text.lastIndexOf("\n", l.at - 1) + 1;
+    const le = text.indexOf("\n", l.at) < 0 ? text.length : text.indexOf("\n", l.at);
+    const a = Math.max(ls, l.at - 24);
+    const b = Math.min(le, l.at + l.label.length + 24);
+    return {
+      before: (a > ls ? "…" : "") + text.slice(a, l.at),
+      after: text.slice(l.at + l.label.length, b) + (b < le ? "…" : ""),
+    };
+  };
+  return (
+    <ul className="ai-links" data-testid="ai-links">
+      {links.map((l, i) => {
+        const on = accepted.has(i);
+        const { before, after } = around(l);
+        return (
+          <li key={i}>
+            <label className={"ai-link" + (on ? " on" : "")} data-testid="ai-link">
+              <input
+                type="checkbox"
+                checked={on}
+                onChange={() => onToggle(i)}
+                aria-label={`「${l.label}」をリンクにする`}
+              />
+              <span className="ai-link-body">
+                <span className="ai-link-head">
+                  <strong>{l.label}</strong>
+                  {l.target !== l.label && <span className="muted"> → {l.target}</span>}
+                  <span className={"tag" + (l.exists ? "" : " tag-new")}>
+                    {l.exists ? "既存のページ" : "新しいページ"}
+                  </span>
+                </span>
+                <span className="ai-link-ctx muted small">
+                  {before}
+                  <mark>{l.label}</mark>
+                  {after}
+                </span>
+              </span>
+            </label>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 /** Unchanged lines (collapsed) and each hunk with a checkbox; changed characters highlighted. */

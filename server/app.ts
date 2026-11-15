@@ -18,7 +18,7 @@ import { normalizePageName, parentName, validatePageName } from '../shared/pageN
 import { matchesAll, searchTerms, snippet } from '../shared/search.js'
 import { AI_NEEDS_WEB, AI_NO_WEB, isAiPreset, isAiVolume, type LinkCandidate, type RelatedPage, type Reviser } from './ai.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
-import { applySuggestedLinks, extractWikiTargets, rewriteWikiLinks, unwrapWikiLinks } from '../shared/markdown/wikilinks.js'
+import { applyLinks, suggestedLinks, extractWikiTargets, rewriteWikiLinks, unwrapWikiLinks, type SuggestedLink } from '../shared/markdown/wikilinks.js'
 import { diffHunks, groupChanges } from '../shared/diff.js'
 
 export type Role = 'owner' | 'editor' | 'viewer'
@@ -655,10 +655,11 @@ export function createApp(db: DB, cfg: AppConfig) {
 
     const target = content.slice(start, end)
     const pid = c.req.param('pid')!
-    const candidates = preset === 'links' ? linkCandidates(wikiId, pid, target) : []
+    const linking = preset === 'links' || preset === 'keywords'
+    const candidates = linking ? linkCandidates(wikiId, pid, target) : []
     // Nothing to link: answer without asking the model (and without counting a use).
     if (preset === 'links' && candidates.length === 0) {
-      const none = { revised: target, summary: 'リンクにできるページ名は見つかりませんでした。', sources: [], related: [], remaining: null }
+      const none = { revised: target, summary: 'リンクにできるページ名は見つかりませんでした。', sources: [], related: [], remaining: null, links: [] }
       return b.stream === true ? new Response(JSON.stringify({ done: none }) + '\n', { headers: { 'content-type': 'application/x-ndjson; charset=utf-8' } }) : c.json(none)
     }
 
@@ -681,12 +682,18 @@ export function createApp(db: DB, cfg: AppConfig) {
       let revised = r.revised.replace(/\r\n?/g, '\n')
       const trail = (t: string) => /\n*$/.exec(t)![0]
       revised = revised.replace(/\n*$/, '') + trail(target)
-      if (revised.includes('[[')) revised = unwrapWikiLinks(revised, (t) => !before.has(t) && !exists(t))
-      // Linking only adds links: rebuild from the original so nothing else changes.
-      if (preset === 'links') revised = applySuggestedLinks(target, revised)
+      // (Except for key terms, where pages to be written are the point.)
+      if (preset !== 'keywords' && revised.includes('[[')) revised = unwrapWikiLinks(revised, (t) => !before.has(t) && !exists(t))
+      // Linking only adds links: rebuild from the original so nothing else changes; each
+      // link is listed so that the client can adopt them one by one.
+      let links: (SuggestedLink & { exists: boolean })[] | undefined
+      if (linking) {
+        links = suggestedLinks(target, revised).filter((l) => validatePageName(l.target)).map((l) => ({ ...l, exists: exists(normalizePageName(l.target)) }))
+        revised = applyLinks(target, links)
+      }
       // Only plain web links reach the client (they may be pasted into the page).
       const sources = (r.sources ?? []).filter((s) => /^https?:\/\//.test(s.uri)).map((s) => ({ uri: s.uri, title: s.title?.slice(0, 200) }))
-      return { revised, summary: r.summary, sources, related: related.map((p) => p.name), remaining }
+      return { revised, summary: r.summary, sources, related: related.map((p) => p.name), remaining, links }
     }
     const ai = cfg.ai
 

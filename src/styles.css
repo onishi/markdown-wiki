@@ -463,6 +463,15 @@ mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0 1px; 
 .ai-instruction { resize: vertical; }
 .ai-summary { margin: 0; padding: 8px 12px; background: var(--accent-soft); border-radius: 6px; font-size: 14px; }
 .ai-bulk { display: flex; gap: 12px; align-items: center; }
+.ai-links { list-style: none; margin: 0; padding: 0; max-height: 55vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.ai-links li + li { border-top: 1px solid var(--border); }
+.ai-link { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; cursor: pointer; opacity: .55; }
+.ai-link.on { opacity: 1; }
+.ai-link input { margin-top: 4px; flex: none; }
+.ai-link-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ai-link-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ai-link-ctx { overflow-wrap: anywhere; }
+.ai-link-ctx mark { padding: 0 1px; }
 .ai-diff { max-height: 55vh; overflow: auto; border: 1px solid var(--border); border-radius: 6px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.6; }
 .ai-line { padding: 0 10px 0 34px; white-space: pre-wrap; word-break: break-word; }
 .ai-line.same { color: var(--fg-muted); }

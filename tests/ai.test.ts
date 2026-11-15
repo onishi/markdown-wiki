@@ -225,6 +225,8 @@ describe('AI revise API', () => {
     expect(seen[0].linkCandidates).toEqual([{ name: '用語集', words: ['用語集'] }])
     // only links are taken from the answer, onto the original text; made-up targets are dropped
     expect(r.json.revised).toBe('API の説明は[[用語集]]を見る。メモ。X。`デプロイ手順` [[開発/API]]')
+    // each link is listed for adopting one by one
+    expect(r.json.links).toEqual([{ target: '用語集', label: '用語集', at: 8, exists: true }])
     expect(buildPrompt(seen[0])).toContain('【リンクにできるページ】（wiki に実在するページ。本文中に名前が出てくるもの）\n- 用語集\n')
 
     const r2 = await o('POST', url, { content: '開発の API について', preset: 'links' })
@@ -235,6 +237,33 @@ describe('AI revise API', () => {
     // nothing to link: answered without the model
     const none = await o('POST', url, { content: 'なにもない', preset: 'links' })
     expect(none.json).toMatchObject({ revised: 'なにもない', remaining: null })
+    expect(seen).toHaveLength(2)
+  })
+
+  it('keywords: links key terms, including pages that do not exist yet, one by one', async () => {
+    let answer = ''
+    const seen: ReviseRequest[] = []
+    const { login } = await setup(async (r) => (seen.push(r), { revised: answer, summary: '' }))
+    const o = await login('o@example.com')
+    const w = (await o('POST', '/api/wikis', { name: 'W' })).json.wiki
+    await o('PATCH', `/api/wikis/${w.id}`, { aiEnabled: true })
+    await o('POST', `/api/wikis/${w.id}/pages`, { name: '開発/API', content: '' })
+    const p = (await o('POST', `/api/wikis/${w.id}/pages`, { name: 'メモ', content: '' })).json.page
+    const url = `/api/wikis/${w.id}/pages/${p.id}/ai/revise`
+    const text = 'Kubernetes で API を公開する。Kubernetes は便利。'
+    // spaces added, a renamed target, an invalid name, a word not in the text
+    answer = '[[Kubernetes]] で [[開発/API|API]] を公開する。[[Kubernetes]] は[[a|b|便利]]。[[架空の語]]'
+    const r = await o('POST', url, { content: text, preset: 'keywords', web: true })
+    expect(seen[0]).toMatchObject({ web: false, linkCandidates: [{ name: '開発/API', words: ['API'] }] })
+    expect(r.json.links).toEqual([
+      { target: 'Kubernetes', label: 'Kubernetes', at: 0, exists: false },
+      { target: '開発/API', label: 'API', at: 13, exists: true },
+    ])
+    expect(r.json.revised).toBe('[[Kubernetes]] で [[開発/API|API]] を公開する。Kubernetes は便利。')
+    // no existing page named in the text: the model is still asked
+    answer = '[[Docker]] を使う'
+    const r2 = await o('POST', url, { content: 'Docker を使う', preset: 'keywords' })
+    expect(r2.json.links).toEqual([{ target: 'Docker', label: 'Docker', at: 0, exists: false }])
     expect(seen).toHaveLength(2)
   })
 
