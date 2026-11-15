@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { api, ApiError } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { ApiError } from "../api";
 import {
   applyHunks,
   charDiff,
@@ -95,11 +95,97 @@ const ERRORS: Record<string, string> = {
   ai_failed: "AI の応答を取得できませんでした。もう一度お試しください。",
 };
 
+interface AiAnswer {
+  revised: string;
+  summary: string;
+  sources?: { uri: string; title?: string }[];
+  remaining: number;
+}
+
+/** What can be shown of a partial tagged answer (`<summary>…</summary><revised>…`). */
+export function partialAnswer(text: string): { summary: string; revised: string } {
+  const s = /<summary>([\s\S]*?)(<\/summary>|$)/.exec(text);
+  const a = text.indexOf("<revised>");
+  let revised = a < 0 ? "" : text.slice(a + "<revised>".length).replace(/^\n/, "");
+  const b = revised.indexOf("</revised>");
+  if (b >= 0) revised = revised.slice(0, b);
+  // Hide a closing tag that is still arriving ("</rev").
+  revised = revised.replace(/<\/?[a-z]*$/, "");
+  return { summary: s ? s[1].trim() : "", revised };
+}
+
+/** POST with `stream: true` and read the NDJSON lines; resolves with the final answer. */
+async function streamRevise(url: string, body: object, onText: (t: string) => void, signal: AbortSignal): Promise<AiAnswer> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json", "x-requested-with": "markdown-wiki" },
+      body: JSON.stringify({ ...body, stream: true }),
+      signal,
+    });
+  } catch (e) {
+    if (signal.aborted) throw e;
+    throw new ApiError(0, { error: "network" });
+  }
+  if (!res.ok || !res.body) throw new ApiError(res.status, await res.json().catch(() => null));
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (value) buf += value;
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      if (!line.trim()) continue;
+      const msg = JSON.parse(line);
+      if (msg.error) throw new ApiError(502, { error: msg.error });
+      if (msg.done) return msg.done as AiAnswer;
+      if (typeof msg.text === "string") onText(msg.text);
+    }
+    if (done) throw new ApiError(502, { error: "ai_failed" });
+  }
+}
+
 type Phase =
   | { kind: "ask" }
-  | { kind: "loading" }
+  /** `text`: the model's answer so far (streamed), `started`: when the request was sent. */
+  | { kind: "loading"; text: string; started: number }
   | { kind: "review"; segments: Segment[]; summary: string; remaining: number }
   | { kind: "error"; message: string };
+
+/** While the model writes: elapsed time and the revised text so far. */
+function AiProgress({ text, started, web }: { text: string; started: number; web: boolean }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, []);
+  const box = useRef<HTMLPreElement>(null);
+  const { summary, revised } = partialAnswer(text);
+  useEffect(() => {
+    const el = box.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [revised]);
+  const sec = Math.floor((now - started) / 1000);
+  return (
+    <div className="ai-progress" data-testid="ai-progress" aria-live="polite">
+      <div className="ai-progress-head">
+        <span className="ai-spinner" aria-hidden />
+        <span>{revised ? "書いています…" : web ? "調べています…" : "考えています…"}</span>
+        <span className="muted small">{sec} 秒</span>
+      </div>
+      {summary && <p className="ai-progress-summary small">{summary}</p>}
+      {revised && (
+        <pre className="ai-progress-text" ref={box} data-testid="ai-progress-text">
+          {revised}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 /**
  * Ask Gemini for a revision of the selection (or the whole page), then review it as a
@@ -157,24 +243,37 @@ export function AiDialog({
       : { start: 0, end: content.length };
   const target = content.slice(range.start, range.end);
 
+  const abort = useRef<AbortController | null>(null);
+  useEffect(() => () => abort.current?.abort(), []);
+  const stop = () => {
+    reqId.current++;
+    abort.current?.abort();
+    setPhase({ kind: "ask" });
+  };
+
   const run = async () => {
     const id = ++reqId.current;
-    setPhase({ kind: "loading" });
+    abort.current?.abort();
+    const ctl = new AbortController();
+    abort.current = ctl;
+    setPhase({ kind: "loading", text: "", started: Date.now() });
     try {
-      const r = await api<{
-        revised: string;
-        summary: string;
-        sources?: { uri: string; title?: string }[];
-        remaining: number;
-      }>("POST", `/api/wikis/${wikiId}/pages/${pageId}/ai/revise`, {
-        content,
-        start: range.start,
-        end: range.end,
-        preset,
-        volume: volumeOff ? "auto" : volume,
-        instruction,
-        web: useWeb,
-      });
+      const r = await streamRevise(
+        `/api/wikis/${wikiId}/pages/${pageId}/ai/revise`,
+        {
+          content,
+          start: range.start,
+          end: range.end,
+          preset,
+          volume: volumeOff ? "auto" : volume,
+          instruction,
+          web: useWeb,
+        },
+        (text) => {
+          if (id === reqId.current) setPhase((p) => (p.kind === "loading" ? { ...p, text } : p));
+        },
+        ctl.signal,
+      );
       if (id !== reqId.current) return;
       const segments = reviewSegments(target, r.revised, r.sources ?? []);
       setAccepted(new Set(segments.flatMap((s) => ("id" in s ? [s.id] : []))));
@@ -221,7 +320,7 @@ export function AiDialog({
   return (
     <Modal
       title="AI に手伝ってもらう"
-      onClose={() => ((reqId.current = -1), onClose())}
+      onClose={() => ((reqId.current = -1), abort.current?.abort(), onClose())}
       wide
     >
       <div className="ai-dialog" data-testid="ai-dialog">
@@ -373,22 +472,29 @@ export function AiDialog({
             {phase.kind === "error" && (
               <div className="notice">{phase.message}</div>
             )}
+            {phase.kind === "loading" && <AiProgress text={phase.text} started={phase.started} web={useWeb} />}
             <p className="ai-privacy">
               対象（とページ全体の文脈）が Google の Gemini に送られます
               {useWeb && "。ページの内容をもとに Google 検索も行われます"}
               。提案は保存されず、採用した変更だけが通常の編集として保存されます。
             </p>
             <div className="modal-actions">
-              <button className="btn" onClick={onClose}>
-                閉じる
-              </button>
+              {phase.kind === "loading" ? (
+                <button className="btn" onClick={stop} data-testid="ai-stop">
+                  中止
+                </button>
+              ) : (
+                <button className="btn" onClick={onClose}>
+                  閉じる
+                </button>
+              )}
               <button
                 className="btn btn-primary"
                 onClick={run}
                 disabled={phase.kind === "loading"}
                 data-testid="ai-run"
               >
-                {phase.kind === "loading" ? "考えています…" : "提案を作成"}
+                {phase.kind === "loading" ? "作成中…" : "提案を作成"}
               </button>
             </div>
           </>

@@ -61,12 +61,23 @@ export interface ReviseResult {
   /** Web pages the answer was grounded on (web mode only). */
   sources?: AiSource[]
 }
-export type Reviser = (r: ReviseRequest) => Promise<ReviseResult>
+/** `onText` (optional) receives the raw answer as it streams in (the whole text so far). */
+export type Reviser = (r: ReviseRequest, onText?: (soFar: string) => void) => Promise<ReviseResult>
 
 const COMMON_RULES = `- 書き換えるのは「対象」だけです。返す revised は、書き換え後の「対象」部分の全文です（ページ全体ではありません。対象の外の文章を含めないでください）。
 - 指示に関係しない箇所は一字一句変えないでください。好みで言い回しを変えないでください。
 - 文体（です・ます／である）、用語、表記は元の文章に合わせてください。
 - Markdown の構造を保ってください。[[ページ名]] や [[ページ名|表示名]] の wiki リンク、URL、画像、コードブロックの中身は変えないでください。`
+
+/**
+ * The answer comes in tags rather than JSON: it streams (the revised text can be shown
+ * as it is written) and Google Search grounding cannot be combined with JSON output.
+ */
+const FORMAT = (summary: string) => `【出力形式】次の形式だけを出力してください。前後に説明やコードフェンスを付けないでください。
+<summary>${summary}</summary>
+<revised>
+書き換え後の対象部分の全文（変更が不要なら対象をそのまま）
+</revised>`
 
 const SYSTEM = `あなたはチームで使う Markdown wiki の編集を手伝うアシスタントです。
 指定された「対象」の部分を、指示に従って書き換えた結果を返します。
@@ -75,9 +86,10 @@ const SYSTEM = `あなたはチームで使う Markdown wiki の編集を手伝�
 ${COMMON_RULES}
 - 本文に書かれていない事実・数値・固有名詞を作らないでください。推測で補わないでください。ただし対象が空で本文を新しく書くときは、確実に知っている事実だけを書き、不確かな数値・日付・固有名詞は「(TBD)」としてください。
 - 本文にない URL、[[リンク]]、コマンド、設定値を新しく作らないでください。
-- summary には、何をどう変えたかを日本語 1〜2 文で書いてください。変更が不要なら revised に対象をそのまま入れ、summary にその旨を書いてください。`
+- 変更が不要なら revised に対象をそのまま入れ、summary にその旨を書いてください。
 
-/** Web mode: Google Search grounding cannot be combined with JSON output, so the answer comes in tags. */
+${FORMAT('何をどう変えたか（日本語 1〜2 文）')}`
+
 const SYSTEM_WEB = `あなたはチームで使う Markdown wiki の編集を手伝うアシスタントです。
 指定された「対象」の部分を、指示に従って書き換えた結果を返します。必要に応じて Google 検索で調べてください。
 
@@ -87,11 +99,7 @@ ${COMMON_RULES}
 - ページタイトル（主題）について調べてください。同名の別のものと取り違えないでください。
 - 本文に URL や出典は書かないでください（出典は別に表示されます）。本文にない [[リンク]]、コマンド、設定値も作らないでください。
 
-【出力形式】次の形式だけを出力してください。前後に説明やコードフェンスを付けないでください。
-<summary>何をどう変えたか（日本語 1〜2 文。検索で確認した内容を足した場合はそのことも）</summary>
-<revised>
-書き換え後の対象部分の全文（変更が不要なら対象をそのまま）
-</revised>`
+${FORMAT('何をどう変えたか（日本語 1〜2 文。検索で確認した内容を足した場合はそのことも）')}`
 
 /** Pull summary / revised out of the tagged web-mode answer. */
 export function parseTagged(text: string): { revised: string; summary: string } {
@@ -168,43 +176,35 @@ ${target}
 }
 
 export function geminiReviser(apiKey: string): Reviser {
-  // systemInstruction / JSON schema need v1beta (v1 rejects "Developer instruction").
+  // systemInstruction needs v1beta (v1 rejects "Developer instruction").
   const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' })
-  return async (r) => {
-    const res = await ai.models.generateContent({
+  return async (r, onText) => {
+    const stream = await ai.models.generateContentStream({
       model: MODEL,
       contents: buildPrompt(r),
-      config: r.web
-        ? { systemInstruction: SYSTEM_WEB, tools: [{ googleSearch: {} }] }
-        : {
-            systemInstruction: SYSTEM,
-            responseMimeType: 'application/json',
-            responseJsonSchema: {
-              type: 'object',
-              properties: {
-                revised: { type: 'string', description: '書き換え後の対象部分の全文（Markdown）' },
-                summary: { type: 'string', description: '変更内容の要約（日本語 1〜2 文）' },
-              },
-              required: ['revised', 'summary'],
-            },
-          },
+      config: r.web ? { systemInstruction: SYSTEM_WEB, tools: [{ googleSearch: {} }] } : { systemInstruction: SYSTEM },
     })
     let text = ''
-    try {
-      text = res.text ?? ''
-    } catch {
-      // blocked or empty response
+    const chunks: { uri: string; title?: string }[] = []
+    for await (const res of stream) {
+      let t = ''
+      try {
+        t = res.text ?? ''
+      } catch {
+        // blocked or empty chunk
+      }
+      if (t) {
+        text += t
+        onText?.(text)
+      }
+      for (const c of res.candidates?.[0]?.groundingMetadata?.groundingChunks ?? []) if (c.web?.uri) chunks.push({ uri: c.web.uri, title: c.web.title })
     }
-    if (r.web) {
-      const out = parseTagged(text)
-      const seen = new Set<string>()
-      const chunks = (res.candidates?.[0]?.groundingMetadata?.groundingChunks ?? []).filter((c) => c.web?.uri && !seen.has(c.web.uri) && seen.add(c.web.uri))
-      const sources = await Promise.all(chunks.slice(0, 8).map((c) => resolveSource(c.web!.uri!, c.web!.title)))
-      return { ...out, sources }
-    }
-    const out = JSON.parse(text) as Partial<ReviseResult>
-    if (typeof out.revised !== 'string') throw new Error('bad_response')
-    return { revised: out.revised, summary: typeof out.summary === 'string' ? out.summary : '' }
+    const out = parseTagged(text)
+    if (!r.web) return out
+    const seen = new Set<string>()
+    const unique = chunks.filter((c) => !seen.has(c.uri) && seen.add(c.uri))
+    const sources = await Promise.all(unique.slice(0, 8).map((c) => resolveSource(c.uri, c.title)))
+    return { ...out, sources }
   }
 }
 
@@ -212,11 +212,17 @@ export function geminiReviser(apiKey: string): Reviser {
  * Deterministic stand-in for automated tests (enabled only together with dev login):
  * fixes "teh" → "the" and appends a line to the target.
  */
-export const fakeReviser: Reviser = async (r) => {
+export const fakeReviser: Reviser = async (r, onText) => {
   const target = r.page.slice(r.start, r.end)
-  return {
-    revised: target.replace(/teh/g, 'the') + '\n\n（AI 追記）',
-    summary: `テスト用の提案（${r.preset}${r.volume && r.volume !== 'auto' ? ', ' + r.volume : ''}${r.web ? ', web' : ''}）`,
-    sources: r.web ? [{ uri: 'https://example.com/source', title: 'example.com' }] : undefined,
+  const revised = target.replace(/teh/g, 'the') + '\n\n（AI 追記）'
+  const summary = `テスト用の提案（${r.preset}${r.volume && r.volume !== 'auto' ? ', ' + r.volume : ''}${r.web ? ', web' : ''}）`
+  if (onText) {
+    // Stream it like the model does: partway, a pause, then the rest.
+    const whole = `<summary>${summary}</summary>\n<revised>\n${revised}\n</revised>`
+    const cut = whole.indexOf('<revised>') + '<revised>\n'.length + Math.ceil(revised.length / 2)
+    onText(whole.slice(0, cut))
+    await new Promise((res) => setTimeout(res, r.instruction.includes('[slow]') ? 1500 : 50))
+    onText(whole)
   }
+  return { revised, summary, sources: r.web ? [{ uri: 'https://example.com/source', title: 'example.com' }] : undefined }
 }

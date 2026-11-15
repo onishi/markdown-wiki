@@ -135,6 +135,40 @@ describe('AI revise API', () => {
     expect((await editor('PATCH', `/api/wikis/${w.id}`, { aiEnabled: false })).status).toBe(403)
   })
 
+  it('streams the answer as NDJSON when asked', async () => {
+    let fail = false
+    const app = createApp(openDb(':memory:'), {
+      appOrigin: 'http://localhost:5173',
+      devLogin: true,
+      secureCookies: false,
+      ai: async (r, onText) => {
+        onText?.('<summary>s</summary>\n<revised>\nAB')
+        await new Promise((res) => setTimeout(res, 200))
+        if (fail) throw new Error('boom')
+        onText?.('<summary>s</summary>\n<revised>\nABC\n</revised>')
+        return { revised: 'ABC', summary: 's' }
+      },
+    })
+    const res = await app.request('/auth/dev-login?email=o@example.com')
+    const headers = { cookie: res.headers.get('set-cookie')!.split(';')[0], 'content-type': 'application/json', 'x-requested-with': 'markdown-wiki' }
+    const call = (path: string, body: unknown) => app.request(path, { method: 'POST', headers, body: JSON.stringify(body) })
+    const w = (await (await call('/api/wikis', { name: 'W' })).json()).wiki
+    const p = (await (await call(`/api/wikis/${w.id}/pages`, { name: 'P', content: 'abc\n' })).json()).page
+    await app.request(`/api/wikis/${w.id}`, { method: 'PATCH', headers, body: JSON.stringify({ aiEnabled: true }) })
+    const url = `/api/wikis/${w.id}/pages/${p.id}/ai/revise`
+    const read = async (r: Response) => (await r.text()).trim().split('\n').map((l) => JSON.parse(l))
+    const ok = await call(url, { content: 'abc\n', stream: true })
+    expect(ok.headers.get('content-type')).toContain('application/x-ndjson')
+    const lines = await read(ok)
+    expect(lines[0]).toEqual({ text: '<summary>s</summary>\n<revised>\nAB' })
+    expect(lines.at(-2)).toEqual({ text: '<summary>s</summary>\n<revised>\nABC\n</revised>' })
+    expect(lines.at(-1)).toEqual({ done: { revised: 'ABC\n', summary: 's', sources: [], remaining: 99 } })
+    fail = true
+    expect((await read(await call(url, { content: 'abc\n', stream: true }))).at(-1)).toEqual({ error: 'ai_failed' })
+    // validation errors still come as plain JSON
+    expect((await call(url, { content: 'abc', start: 2, end: 9, stream: true })).status).toBe(400)
+  })
+
   it('reports when no API key is configured and when the model fails', async () => {
     const none = await setup()
     const o = await none.login('o@example.com')
@@ -151,5 +185,15 @@ describe('AI revise API', () => {
     const p2 = (await f('POST', `/api/wikis/${w2.id}/pages`, { name: 'P', content: 'abc' })).json.page
     await f('PATCH', `/api/wikis/${w2.id}`, { aiEnabled: true })
     expect((await f('POST', `/api/wikis/${w2.id}/pages/${p2.id}/ai/revise`, { content: 'abc' })).status).toBe(502)
+  })
+})
+
+describe('streamed answer', () => {
+  it('shows what has arrived of a partial answer', async () => {
+    const { partialAnswer } = await import('../src/wiki/AiDialog')
+    expect(partialAnswer('<summ')).toEqual({ summary: '', revised: '' })
+    expect(partialAnswer('<summary>直し')).toEqual({ summary: '直し', revised: '' })
+    expect(partialAnswer('<summary>直した</summary>\n<revised>\n# A\n\nb</rev')).toEqual({ summary: '直した', revised: '# A\n\nb' })
+    expect(partialAnswer('<summary>x</summary><revised>\nAB\n</revised>')).toEqual({ summary: 'x', revised: 'AB\n' })
   })
 })

@@ -546,6 +546,20 @@ test('AI suggestions: owner opts in, review the diff, adopt some changes, undo',
   await expect(page.getByTestId('ai-hunk').last()).toHaveText(/^\s*出典:\s*- \[example\.com\]/) // sources: a hunk of their own
   await page.getByRole('button', { name: '採用しない' }).click()
 
+  // streaming: the text shows up while it is written; it can be stopped
+  await page.getByTestId('ai-button').click()
+  await page.getByTestId('ai-instruction').fill('[slow]')
+  await page.getByTestId('ai-run').click()
+  await expect(page.getByTestId('ai-progress')).toContainText('テスト用の提案')
+  await expect(page.getByTestId('ai-progress-text')).toContainText('first the line')
+  await page.getByTestId('ai-stop').click()
+  await expect(page.getByTestId('ai-progress')).toHaveCount(0)
+  await expect(page.getByTestId('ai-run')).toBeEnabled()
+  await page.getByTestId('ai-run').click()
+  await expect(page.getByTestId('ai-progress-text')).toBeVisible()
+  await expect(page.getByTestId('ai-summary')).toBeVisible()
+  await page.getByRole('button', { name: '採用しない' }).click()
+
   // an empty page: write it from the title
   await newPage(page, 'Empty')
   await page.getByTestId('ai-button').click()

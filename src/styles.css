@@ -495,3 +495,12 @@ mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0 1px; 
 .tag-new { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
 .tag-ai { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); }
 .history-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* ------------------------------------------------------------------ AI progress */
+.ai-progress { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg-side); }
+.ai-progress-head { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.ai-spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--accent-soft); border-top-color: var(--accent); animation: ai-spin 0.8s linear infinite; }
+@keyframes ai-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ai-spinner { animation-duration: 2.4s; } }
+.ai-progress-summary { margin: 8px 0 0; color: var(--fg-muted); }
+.ai-progress-text { margin: 8px 0 0; max-height: 30vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }

@@ -587,7 +587,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (!w.ai_enabled) return c.json({ error: 'ai_disabled' }, 403)
     const page = db.prepare('SELECT name FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, c.req.param('pid')) as { name: string } | undefined
     if (!page) return c.json({ error: 'not_found' }, 404)
-    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; volume?: string; instruction?: string; web?: boolean }>(c)
+    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; volume?: string; instruction?: string; web?: boolean; stream?: boolean }>(c)
     const content = b.content
     if (typeof content !== 'string' || content.length > MAX_CONTENT) return c.json({ error: 'invalid' }, 400)
     const start = b.start ?? 0
@@ -608,20 +608,61 @@ export function createApp(db: DB, cfg: AppConfig) {
     db.prepare('DELETE FROM ai_usage WHERE day < ?').run(new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10))
 
     const target = content.slice(start, end)
-    let r
+    const req = { wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: b.web === true || AI_NEEDS_WEB.has(preset) }
+    const remaining = AI_DAILY_LIMIT - used - 1
+    const finish = (r: Awaited<ReturnType<Reviser>>) => {
+      // Keep the target's trailing-newline shape so the splice stays clean.
+      let revised = r.revised.replace(/\r\n?/g, '\n')
+      const trail = (t: string) => /\n*$/.exec(t)![0]
+      revised = revised.replace(/\n*$/, '') + trail(target)
+      // Only plain web links reach the client (they may be pasted into the page).
+      const sources = (r.sources ?? []).filter((s) => /^https?:\/\//.test(s.uri)).map((s) => ({ uri: s.uri, title: s.title?.slice(0, 200) }))
+      return { revised, summary: r.summary, sources, remaining }
+    }
+    const ai = cfg.ai
+
+    if (b.stream === true) {
+      // NDJSON: {"text": answer so far} lines while the model writes (throttled), then {"done": result} or {"error": code}.
+      const enc = new TextEncoder()
+      const stream = new ReadableStream<Uint8Array>({
+        async start(ctl) {
+          const send = (o: unknown) => {
+            try {
+              ctl.enqueue(enc.encode(JSON.stringify(o) + '\n'))
+            } catch {
+              // client went away
+            }
+          }
+          let last = 0
+          let pending: string | null = null
+          try {
+            const r = await ai(req, (soFar) => {
+              pending = soFar
+              if (Date.now() - last < 150) return
+              last = Date.now()
+              send({ text: soFar })
+              pending = null
+            })
+            if (pending !== null) send({ text: pending })
+            send({ done: finish(r) })
+          } catch (e) {
+            console.error('ai revise failed', e)
+            send({ error: 'ai_failed' })
+          }
+          try {
+            ctl.close()
+          } catch {}
+        },
+      })
+      return new Response(stream, { headers: { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } })
+    }
+
     try {
-      r = await cfg.ai({ wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: b.web === true || AI_NEEDS_WEB.has(preset) })
+      return c.json(finish(await ai(req)))
     } catch (e) {
       console.error('ai revise failed', e)
       return c.json({ error: 'ai_failed' }, 502)
     }
-    // Keep the target's trailing-newline shape so the splice stays clean.
-    let revised = r.revised.replace(/\r\n?/g, '\n')
-    const trail = (t: string) => /\n*$/.exec(t)![0]
-    revised = revised.replace(/\n*$/, '') + trail(target)
-    // Only plain web links reach the client (they may be pasted into the page).
-    const sources = (r.sources ?? []).filter((s) => /^https?:\/\//.test(s.uri)).map((s) => ({ uri: s.uri, title: s.title?.slice(0, 200) }))
-    return c.json({ revised, summary: r.summary, sources, remaining: AI_DAILY_LIMIT - used - 1 })
   })
 
   app.post('/api/wikis/:wid/pages/:pid/rename', async (c) => {
