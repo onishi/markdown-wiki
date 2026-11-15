@@ -606,9 +606,9 @@ test('AI link suggestions: names of existing pages become [[links]], invented on
   await page.getByRole('radio', { name: 'リンクを張る' }).click()
   await expect(page.getByRole('radio', { name: '長く' })).toBeDisabled()
   await page.getByTestId('ai-run').click()
-  const added = page.getByTestId('ai-hunk').locator('.ai-line.add')
-  await expect(added.first()).toHaveText('詳しくは[[用語集]]を見る。')
-  await expect(added.last()).toHaveText('存在しないページ') // the made-up link was unwrapped
+  await expect(page.getByTestId('ai-hunk')).toHaveCount(1)
+  await expect(page.getByTestId('ai-hunk').locator('.ai-line.add')).toHaveText('詳しくは[[用語集]]を見る。')
+  await expect(page.getByTestId('ai-dialog')).not.toContainText('存在しないページ') // made-up link dropped
   await page.getByTestId('ai-apply').click()
   await page.getByTestId('doc').getByRole('link', { name: '用語集' }).click()
   await expect(page).toHaveURL(new RegExp(`/w/${slug}/p/${encodeURIComponent('用語集')}$`))

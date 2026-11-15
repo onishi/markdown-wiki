@@ -42,3 +42,33 @@ export function unwrapWikiLinks(src: string, drop: (target: string) => boolean):
   for (const ed of edits) out = out.slice(0, ed.s) + ed.text + out.slice(ed.e)
   return out
 }
+
+/** Parts of a text where a new link must not go: code, existing links, URLs (same length, so offsets hold). */
+function maskNoLink(src: string): string {
+  return src.replace(/```[\s\S]*?```|`[^`\n]*`|\[\[[^\]\n]*\]\]|!?\[[^\]\n]*\]\([^)\n]*\)|https?:\/\/\S+/g, (m) => '\u0000'.repeat(m.length))
+}
+
+/**
+ * Put the links that `suggested` adds (relative to `src`) into `src` itself: each wraps
+ * the first plain occurrence of its label.  Nothing else of `suggested` is taken, so
+ * stray edits (spacing, rewording) cannot slip in with the links.
+ */
+export function applySuggestedLinks(src: string, suggested: string): string {
+  const had = new Set(extractWikiTargets(src))
+  const links: { target: string; label: string; raw: string }[] = []
+  walk(parseMarkdown(suggested), (n) => {
+    if (n.type !== 'wikiLink') return
+    const w = n as WikiLink
+    if (had.has(w.target) || links.some((l) => l.target === w.target)) return
+    const raw = suggested.slice(w.targetRange[0], w.targetRange[1])
+    links.push({ target: w.target, label: w.label, raw })
+  })
+  let out = src
+  for (const l of links) {
+    const at = maskNoLink(out).indexOf(l.label)
+    if (at < 0 || !l.label.trim()) continue
+    const link = l.label === l.raw ? `[[${l.raw}]]` : `[[${l.raw}|${l.label}]]`
+    out = out.slice(0, at) + link + out.slice(at + l.label.length)
+  }
+  return out
+}

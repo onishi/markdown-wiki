@@ -219,17 +219,19 @@ describe('AI revise API', () => {
     const p = await mk('メモ')
     const url = `/api/wikis/${w.id}/pages/${p.id}/ai/revise`
     const text = 'API の説明は用語集を見る。メモ。X。`デプロイ手順` [[開発/API]]'
-    answer = '[[開発/API|API]] の説明は[[用語集]]を見る。[[架空]]と[[旧ページ]]。'
+    answer = '[[開発/API|API]] の説明は [[用語集]] を見る。[[架空]]と[[旧ページ]]。'
     const r = await o('POST', url, { content: text, preset: 'links' })
     // only the names found outside code and existing links; not this page itself
     expect(seen[0].linkCandidates).toEqual([{ name: '用語集', words: ['用語集'] }])
-    expect(r.json.revised).toBe('[[開発/API|API]] の説明は[[用語集]]を見る。架空と[[旧ページ]]。')
+    // only links are taken from the answer, onto the original text; made-up targets are dropped
+    expect(r.json.revised).toBe('API の説明は[[用語集]]を見る。メモ。X。`デプロイ手順` [[開発/API]]')
     expect(buildPrompt(seen[0])).toContain('【リンクにできるページ】（wiki に実在するページ。本文中に名前が出てくるもの）\n- 用語集\n')
 
     const r2 = await o('POST', url, { content: '開発の API について', preset: 'links' })
     expect(seen[1].linkCandidates).toEqual([{ name: '開発/API', words: ['API'] }])
     expect(buildPrompt(seen[1])).toContain('- 開発/API（本文中の表記: 「API」）')
     expect(r2.json.remaining).toBe(98)
+    expect(r2.json.revised).toBe('開発の [[開発/API|API]] について')
     // nothing to link: answered without the model
     const none = await o('POST', url, { content: 'なにもない', preset: 'links' })
     expect(none.json).toMatchObject({ revised: 'なにもない', remaining: null })

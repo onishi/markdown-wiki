@@ -18,7 +18,7 @@ import { normalizePageName, parentName, validatePageName } from '../shared/pageN
 import { matchesAll, searchTerms, snippet } from '../shared/search.js'
 import { AI_NEEDS_WEB, AI_NO_WEB, isAiPreset, isAiVolume, type LinkCandidate, type RelatedPage, type Reviser } from './ai.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
-import { extractWikiTargets, rewriteWikiLinks, unwrapWikiLinks } from '../shared/markdown/wikilinks.js'
+import { applySuggestedLinks, extractWikiTargets, rewriteWikiLinks, unwrapWikiLinks } from '../shared/markdown/wikilinks.js'
 import { diffHunks, groupChanges } from '../shared/diff.js'
 
 export type Role = 'owner' | 'editor' | 'viewer'
@@ -682,6 +682,8 @@ export function createApp(db: DB, cfg: AppConfig) {
       const trail = (t: string) => /\n*$/.exec(t)![0]
       revised = revised.replace(/\n*$/, '') + trail(target)
       if (revised.includes('[[')) revised = unwrapWikiLinks(revised, (t) => !before.has(t) && !exists(t))
+      // Linking only adds links: rebuild from the original so nothing else changes.
+      if (preset === 'links') revised = applySuggestedLinks(target, revised)
       // Only plain web links reach the client (they may be pasted into the page).
       const sources = (r.sources ?? []).filter((s) => /^https?:\/\//.test(s.uri)).map((s) => ({ uri: s.uri, title: s.title?.slice(0, 200) }))
       return { revised, summary: r.summary, sources, related: related.map((p) => p.name), remaining }
