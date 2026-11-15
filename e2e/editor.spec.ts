@@ -664,3 +664,60 @@ test.describe('below the last line', () => {
     expect(await source(page)).toBe(SAMPLE.replace(/\n?$/, '') + '\n\n末尾に足した段落' + (SAMPLE.endsWith('\n') ? '\n' : ''))
   })
 })
+
+test.describe('shortcuts', () => {
+  test('⌘B / ⌘I: bold and italic in display mode and in edit mode, undoable', async ({ page }) => {
+    // display mode: select a word and press ⌘B
+    await caretAt(page, '引用の一行目', 0)
+    await page.keyboard.press('Shift+ArrowRight')
+    await page.keyboard.press('Shift+ArrowRight')
+    await page.keyboard.press('ControlOrMeta+b')
+    expect(await source(page)).toContain('> **引用**の一行目')
+    await page.keyboard.press('ControlOrMeta+b') // still selected: toggles back
+    expect(await source(page)).toContain('> 引用の一行目')
+    await page.keyboard.press('ControlOrMeta+i')
+    expect(await source(page)).toContain('> *引用*の一行目')
+    await page.keyboard.press('ControlOrMeta+z')
+    expect(await source(page)).toContain('> 引用の一行目')
+
+    // edit mode: wrap the selection; with nothing selected, insert a pair
+    await caretAt(page, '引用の一行目', 0)
+    await page.keyboard.press('Enter')
+    const ta = page.locator('[data-testid=src-editor] textarea')
+    await ta.evaluate((t: HTMLTextAreaElement) => t.setSelectionRange(2, 4))
+    await page.keyboard.press('ControlOrMeta+i')
+    await expect(ta).toHaveValue(/^> \*引用\*の一行目/)
+    await page.keyboard.press('ControlOrMeta+z')
+    await expect(ta).toHaveValue(/^> 引用の一行目/)
+  })
+
+  test('Tab moves between table cells', async ({ page }) => {
+    // display mode
+    await caretAt(page, 'foo', 0)
+    await page.keyboard.press('Tab')
+    expect(await focusInfo(page)).toMatchObject({ selected: '左寄せ' })
+    await page.keyboard.press('Tab')
+    expect(await focusInfo(page)).toMatchObject({ selected: 'bar' })
+    await page.keyboard.press('Shift+Tab')
+    expect(await focusInfo(page)).toMatchObject({ selected: '左寄せ' })
+    // edit mode: Tab past the last cell adds a row
+    await caretAt(page, '右寄せ', 1)
+    await page.keyboard.press('Enter')
+    const ta = page.locator('[data-testid=src-editor] textarea')
+    await page.keyboard.press('Shift+Tab')
+    expect(await ta.evaluate((t: HTMLTextAreaElement) => t.value.slice(t.selectionStart, t.selectionEnd))).toBe('bar')
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Tab')
+    await page.keyboard.type('baz')
+    await expect(ta).toHaveValue(/\| bar  \| 右寄せ \|\n\| baz  \|   \|$/)
+  })
+})
+
+test('outline: at the bottom of the page the last heading on screen is current', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 700 })
+  await page.mouse.move(640, 400)
+  await page.mouse.wheel(0, 5000)
+  await expect(page.getByTestId('outline').locator('button.active')).toHaveText('リンク')
+  await page.mouse.wheel(0, -5000)
+  await expect(page.getByTestId('outline').locator('button.active')).toHaveText('Markdown Wiki プレイグラウンド')
+})

@@ -1,5 +1,6 @@
 import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { continueOnEnter } from '../../shared/markdown/continueLine'
+import { tableTab, toggleWrap, type TextEdit } from '../../shared/markdown/inline'
 import { rankNames } from '../../shared/fuzzy'
 
 export interface EditCtxValue {
@@ -24,6 +25,17 @@ export function wikiQueryAt(text: string, caret: number): { start: number; query
 export const EditCtx = createContext<EditCtxValue | null>(null)
 
 /** Is this keydown part of an IME composition (confirm/cancel)? */
+/** Apply an edit through execCommand so it is one step of the textarea's native undo. */
+function applyTextEdit(ta: HTMLTextAreaElement, ed: TextEdit) {
+  if (ed.from !== ed.to || ed.text) {
+    ta.setSelectionRange(ed.from, ed.to)
+    const ok = ed.text ? document.execCommand('insertText', false, ed.text) : document.execCommand('delete')
+    if (!ok) ta.setRangeText(ed.text, ed.from, ed.to)
+    ta.dispatchEvent(new Event('input', { bubbles: true }))
+  }
+  ta.setSelectionRange(ed.selStart, ed.selEnd)
+}
+
 export function isImeKey(e: React.KeyboardEvent | KeyboardEvent, lastCompositionEnd: number): boolean {
   const ne = 'nativeEvent' in e ? e.nativeEvent : e
   if (ne.isComposing || ne.keyCode === 229) return true
@@ -127,10 +139,22 @@ export function SourceEditor() {
         return
       }
     }
+    const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
+    const cmd = isMac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey
+    if (cmd && !e.altKey && !e.shiftKey && (e.key.toLowerCase() === 'b' || e.key.toLowerCase() === 'i')) {
+      e.preventDefault()
+      e.stopPropagation()
+      const ta = e.currentTarget
+      applyTextEdit(ta, toggleWrap(ta.value, ta.selectionStart, ta.selectionEnd, e.key.toLowerCase() === 'b' ? '**' : '*'))
+      return
+    }
     if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault()
       const ta = e.currentTarget
-      if (e.shiftKey) {
+      const cell = tableTab(ta.value, ta.selectionStart, e.shiftKey)
+      if (cell) {
+        applyTextEdit(ta, cell)
+      } else if (e.shiftKey) {
         // Outdent current line by up to two spaces.
         const ls = ta.value.lastIndexOf('\n', ta.selectionStart - 1) + 1
         const n = /^ {1,2}/.exec(ta.value.slice(ls))?.[0].length ?? 0

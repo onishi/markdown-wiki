@@ -4,6 +4,7 @@ import { parseMarkdown } from '../../shared/markdown/parse'
 import { makeContext, renderDocument, taskMarkerOffset, type SoftBreak, type WikiResolver } from '../../shared/markdown/render'
 import { blockIndexAt, computeEditUnit, computeRangeUnit, type EditUnit, type ListMode } from '../../shared/markdown/units'
 import { openLine, type BlockKind } from '../../shared/markdown/openLine'
+import { tableTab, toggleWrap } from '../../shared/markdown/inline'
 import { toReact, type Run } from './vdom'
 import { SourceMap, caretRect, pointFromCoords } from './mapping'
 import { EditCtx, SourceEditor, isImeKey, textareaCaretY, type EditCtxValue } from './SourceEditor'
@@ -93,7 +94,7 @@ export function DocEditor(props: DocEditorProps) {
   const [focused, setFocused] = useState(false)
   const [menu, setMenu] = useState<Menu | null>(null)
   const mouseDown = useRef(false)
-  const pending = useRef<{ caret?: number; anchorY?: number; focusDoc?: boolean; top?: boolean; reveal?: boolean } | null>(null)
+  const pending = useRef<{ caret?: number; selEnd?: number; anchorY?: number; focusDoc?: boolean; top?: boolean; reveal?: boolean } | null>(null)
   const [, forceRender] = useState(0)
   const [toast, setToast] = useState<string | null>(null)
   useEffect(() => {
@@ -312,7 +313,8 @@ export function DocEditor(props: DocEditorProps) {
       const pt = map().sourceToDom(p.caret)
       const sel = document.getSelection()
       if (pt && sel) {
-        sel.setBaseAndExtent(pt.node, pt.offset, pt.node, pt.offset)
+        const to = p.selEnd !== undefined ? map().sourceToDom(p.selEnd) : null
+        sel.setBaseAndExtent(pt.node, pt.offset, to?.node ?? pt.node, to?.offset ?? pt.offset)
         const r = caretRect(pt.node, pt.offset)
         if (p.top) {
           const block = pt.node.parentElement?.closest('h1, h2, h3, h4, h5, h6, p, li, td, th, pre')
@@ -752,6 +754,39 @@ export function DocEditor(props: DocEditorProps) {
       const last = spans[spans.length - 1]?.firstChild as Text | undefined
       if (first && last) document.getSelection()?.setBaseAndExtent(first, 0, last, last.length)
       return
+    }
+
+    // ⌘B / ⌘I: bold / italic around the selected text (same as in edit mode).
+    if (cmd && !e.altKey && !e.shiftKey && (e.key.toLowerCase() === 'b' || e.key.toLowerCase() === 'i')) {
+      e.preventDefault()
+      if (readOnly) return
+      const range = selectionRange()
+      if (!range || source.slice(range[0], range[1]).includes('\n')) {
+        setToast(range ? '1 つの段落の中で選んでください' : '文字を選んでから押してください')
+        return
+      }
+      const ed = toggleWrap(source, range[0], range[1], e.key.toLowerCase() === 'b' ? '**' : '*')
+      record(source)
+      pending.current = { caret: ed.selStart, selEnd: ed.selEnd, focusDoc: true }
+      emit(source.slice(0, ed.from) + ed.text + source.slice(ed.to))
+      return
+    }
+    // Tab / Shift+Tab in a table: next / previous cell.
+    if (e.key === 'Tab' && !mod && !e.altKey) {
+      const off = focusOffset()
+      const ed = off == null ? null : tableTab(source, off, e.shiftKey)
+      if (ed) {
+        e.preventDefault()
+        if (ed.text) return // past the last cell: rows are added in edit mode
+        const m = map()
+        const a = m.sourceToDom(ed.selStart)
+        const b = m.sourceToDom(ed.selEnd)
+        if (a && b) {
+          document.getSelection()?.setBaseAndExtent(a.node, a.offset, b.node, b.offset)
+          scrollCaretIntoView()
+        } else startEdit(ed.selStart) // an empty cell has no text to put the caret in
+        return
+      }
     }
 
     // Emacs-style movement (macOS: Ctrl is free for this, app shortcuts use Cmd).
