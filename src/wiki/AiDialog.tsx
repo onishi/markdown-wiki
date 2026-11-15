@@ -67,14 +67,21 @@ const PRESET_GROUPS: {
         label: "表に整理",
         hint: "列挙されている情報を表にまとめます。",
       },
+      {
+        key: "links",
+        label: "リンクを張る",
+        hint: "本文に出てくる、wiki にあるページの名前を [[リンク]] にします。",
+      },
     ],
   },
 ];
 const PRESETS = PRESET_GROUPS.flatMap((g) => g.items);
 /** Tasks that always look things up (the server forces web mode too). */
 const NEEDS_WEB = new Set(["factcheck"]);
+/** Tasks about the wiki itself, where searching the web is pointless (the server turns it off). */
+const NO_WEB = new Set(["links"]);
 /** Tasks where a target length means nothing. */
-const NO_VOLUME = new Set(["typo", "factcheck"]);
+const NO_VOLUME = new Set(["typo", "factcheck", "links"]);
 
 const VOLUMES: { key: string; label: string }[] = [
   { key: "auto", label: "おまかせ" },
@@ -101,7 +108,8 @@ interface AiAnswer {
   sources?: { uri: string; title?: string }[];
   /** Wiki pages sent as background. */
   related?: string[];
-  remaining: number;
+  /** Uses left today (null: this answer did not use one). */
+  remaining: number | null;
 }
 
 /** What can be shown of a partial tagged answer (`<summary>…</summary><revised>…`). */
@@ -155,7 +163,7 @@ type Phase =
   | { kind: "ask" }
   /** `text`: the model's answer so far (streamed), `started`: when the request was sent. */
   | { kind: "loading"; text: string; started: number }
-  | { kind: "review"; segments: Segment[]; summary: string; related: string[]; remaining: number }
+  | { kind: "review"; segments: Segment[]; summary: string; related: string[]; remaining: number | null }
   | { kind: "error"; message: string };
 
 /** While the model writes: elapsed time and the revised text so far. */
@@ -249,7 +257,7 @@ export function AiDialog({
   const compEnd = useRef(-1e9);
   const reqId = useRef(0);
 
-  const useWeb = web || NEEDS_WEB.has(preset);
+  const useWeb = !NO_WEB.has(preset) && (web || NEEDS_WEB.has(preset));
   const blankPage = content.trim() === "";
   const volumeOff = NO_VOLUME.has(preset);
   const range =
@@ -460,7 +468,7 @@ export function AiDialog({
                   <input
                     type="checkbox"
                     checked={useWeb}
-                    disabled={NEEDS_WEB.has(preset)}
+                    disabled={NEEDS_WEB.has(preset) || NO_WEB.has(preset)}
                     onChange={(e) => toggleWeb(e.target.checked)}
                     data-testid="ai-web"
                   />
@@ -469,6 +477,8 @@ export function AiDialog({
                 <div className="ai-hint">
                   {NEEDS_WEB.has(preset)
                     ? "誤情報の訂正では、常に Google 検索で確かめます。"
+                    : NO_WEB.has(preset)
+                    ? "リンクを張るときは Web は使いません。"
                     : "Google 検索で確認できた事実だけを足し、出典を付けます。"}
                 </div>
               </div>
@@ -562,7 +572,7 @@ export function AiDialog({
             )}
             <div className="modal-actions">
               <span className="muted small ai-remaining">
-                今日の残り {phase.remaining} 回
+                {phase.remaining !== null && `今日の残り ${phase.remaining} 回`}
               </span>
               <button
                 className="btn"

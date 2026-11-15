@@ -202,6 +202,40 @@ describe('AI revise API', () => {
     expect(buildPrompt(seen[1])).not.toContain('関連ページ】')
   })
 
+  it('links: offers pages named in the text, and drops links to pages that do not exist', async () => {
+    const seen: ReviseRequest[] = []
+    let answer = ''
+    const { login } = await setup(async (r) => (seen.push(r), { revised: answer, summary: '' }))
+    const o = await login('o@example.com')
+    const w = (await o('POST', '/api/wikis', { name: 'W' })).json.wiki
+    await o('PATCH', `/api/wikis/${w.id}`, { aiEnabled: true })
+    const mk = async (name: string) => (await o('POST', `/api/wikis/${w.id}/pages`, { name, content: '' })).json.page
+    await mk('開発/API')
+    await mk('用語集')
+    await mk('デプロイ手順')
+    await mk('X') // too short to match
+    const old = await mk('旧ページ')
+    await o('POST', `/api/wikis/${w.id}/pages/${old.id}/rename`, { name: '新ページ' })
+    const p = await mk('メモ')
+    const url = `/api/wikis/${w.id}/pages/${p.id}/ai/revise`
+    const text = 'API の説明は用語集を見る。メモ。X。`デプロイ手順` [[開発/API]]'
+    answer = '[[開発/API|API]] の説明は[[用語集]]を見る。[[架空]]と[[旧ページ]]。'
+    const r = await o('POST', url, { content: text, preset: 'links' })
+    // only the names found outside code and existing links; not this page itself
+    expect(seen[0].linkCandidates).toEqual([{ name: '用語集', words: ['用語集'] }])
+    expect(r.json.revised).toBe('[[開発/API|API]] の説明は[[用語集]]を見る。架空と[[旧ページ]]。')
+    expect(buildPrompt(seen[0])).toContain('【リンクにできるページ】（wiki に実在するページ。本文中に名前が出てくるもの）\n- 用語集\n')
+
+    const r2 = await o('POST', url, { content: '開発の API について', preset: 'links' })
+    expect(seen[1].linkCandidates).toEqual([{ name: '開発/API', words: ['API'] }])
+    expect(buildPrompt(seen[1])).toContain('- 開発/API（本文中の表記: 「API」）')
+    expect(r2.json.remaining).toBe(98)
+    // nothing to link: answered without the model
+    const none = await o('POST', url, { content: 'なにもない', preset: 'links' })
+    expect(none.json).toMatchObject({ revised: 'なにもない', remaining: null })
+    expect(seen).toHaveLength(2)
+  })
+
   it('reports when no API key is configured and when the model fails', async () => {
     const none = await setup()
     const o = await none.login('o@example.com')

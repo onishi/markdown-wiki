@@ -27,3 +27,18 @@ export function rewriteWikiLinks(src: string, renames: Map<string, string>): str
   for (const ed of edits) out = out.slice(0, ed.s) + ed.text + out.slice(ed.e)
   return out
 }
+
+/** Replace `[[target|label]]` links for which `drop(target)` holds by their plain label text. */
+export function unwrapWikiLinks(src: string, drop: (target: string) => boolean): string {
+  const edits: { s: number; e: number; text: string }[] = []
+  walk(parseMarkdown(src), (n) => {
+    if (n.type !== 'wikiLink') return
+    const w = n as WikiLink
+    if (!drop(w.target)) return
+    edits.push({ s: w.position.start.offset!, e: w.position.end.offset!, text: src.slice(w.labelRange[0], w.labelRange[1]) })
+  })
+  edits.sort((a, b) => b.s - a.s)
+  let out = src
+  for (const ed of edits) out = out.slice(0, ed.s) + ed.text + out.slice(ed.e)
+  return out
+}

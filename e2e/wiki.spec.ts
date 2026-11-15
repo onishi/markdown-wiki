@@ -590,6 +590,31 @@ test('AI suggestions: owner opts in, review the diff, adopt some changes, undo',
   await page.context().close()
 })
 
+test('AI link suggestions: names of existing pages become [[links]], invented ones do not', async ({ browser }) => {
+  const page = await login(browser, uniq('ailink'))
+  const slug = await createWiki(page, 'Link wiki')
+  await page.goto(`/w/${slug}/settings`)
+  await page.getByTestId('ai-enabled').click()
+  await expect(page.getByText('AI の提案を有効にしました。')).toBeVisible()
+  await newPage(page, '用語集')
+  await writeBody(page, '用語')
+  await saved(page)
+  await newPage(page, 'メモ')
+  await writeBody(page, '詳しくは用語集を見る。')
+  await saved(page)
+  await page.getByTestId('ai-button').click()
+  await page.getByRole('radio', { name: 'リンクを張る' }).click()
+  await expect(page.getByRole('radio', { name: '長く' })).toBeDisabled()
+  await page.getByTestId('ai-run').click()
+  const added = page.getByTestId('ai-hunk').locator('.ai-line.add')
+  await expect(added.first()).toHaveText('詳しくは[[用語集]]を見る。')
+  await expect(added.last()).toHaveText('存在しないページ') // the made-up link was unwrapped
+  await page.getByTestId('ai-apply').click()
+  await page.getByTestId('doc').getByRole('link', { name: '用語集' }).click()
+  await expect(page).toHaveURL(new RegExp(`/w/${slug}/p/${encodeURIComponent('用語集')}$`))
+  await page.context().close()
+})
+
 test('task list: clicking a checkbox toggles it and rewrites the source', async ({ browser }) => {
   const page = await login(browser, uniq('task'))
   const slug = await createWiki(page, 'Task wiki')

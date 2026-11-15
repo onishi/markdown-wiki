@@ -20,11 +20,15 @@ export const AI_PRESETS = {
   tbd: '「(TBD)」「TODO」など書きかけの箇所を、本文から分かる範囲で埋める。分からない箇所はそのまま残す。それ以外は変えない。',
   table: '列挙されている情報を、適切な列を持つ Markdown の表に整理する。',
   summary: '冒頭に 2〜4 行の要約（箇条書き）を追加する。本文は変えない。',
+  links:
+    'リンクを張る: 【リンクにできるページ】にあるページを指している語句を wiki リンクにする。語句がページ名と同じなら [[ページ名]]、違うなら [[ページ名|語句]] と書く。各ページにつき最初の 1 か所だけ。たまたま同じ文字列でも別の意味で使われている箇所、見出し、コード、URL、既存のリンクの中はリンクにしない。語句を [[ ]] で囲むだけにし、前後に空白を足さない。リンク以外は一字一句変えない。summary にはリンクにした語句を挙げる。',
 } as const
 export type AiPreset = keyof typeof AI_PRESETS
 export const isAiPreset = (p: unknown): p is AiPreset => typeof p === 'string' && p in AI_PRESETS
 /** Tasks that only make sense with Google Search (web mode is forced on). */
 export const AI_NEEDS_WEB: ReadonlySet<AiPreset> = new Set(['factcheck'])
+/** Tasks about the wiki itself: no web search. */
+export const AI_NO_WEB: ReadonlySet<AiPreset> = new Set(['links'])
 
 /** How long the result should be compared with the target ("auto": whatever the task needs). */
 export const AI_VOLUMES = {
@@ -52,6 +56,13 @@ export interface ReviseRequest {
   web?: boolean
   /** Other pages of the wiki given as background (links, backlinks, parent). */
   related?: RelatedPage[]
+  /** "links" task: existing pages whose name (or last part) appears in the target. */
+  linkCandidates?: LinkCandidate[]
+}
+export interface LinkCandidate {
+  name: string
+  /** The words found in the text that may refer to it (the name and/or its last part). */
+  words: string[]
 }
 export interface RelatedPage {
   name: string
@@ -163,9 +174,15 @@ ${r.related.map((p) => `<related name="${p.name.replace(/"/g, '&quot;')}" relati
 
 `
     : ''
+  const candidates = r.linkCandidates?.length
+    ? `【リンクにできるページ】（wiki に実在するページ。本文中に名前が出てくるもの）
+${r.linkCandidates.map((c) => `- ${c.name}${c.words.some((w) => w !== c.name) ? `（本文中の表記: ${c.words.map((w) => `「${w}」`).join('')}）` : ''}`).join('\n')}
+
+`
+    : ''
   return `${pageInfo(r.wikiName, r.pageName)}
 
-${related}【指示】
+${related}${candidates}【指示】
 ${task}
 
 ${
@@ -229,7 +246,16 @@ export function geminiReviser(apiKey: string): Reviser {
  */
 export const fakeReviser: Reviser = async (r, onText) => {
   const target = r.page.slice(r.start, r.end)
-  const revised = target.replace(/teh/g, 'the') + '\n\n（AI 追記）'
+  let revised = target.replace(/teh/g, 'the') + '\n\n（AI 追記）'
+  if (r.preset === 'links') {
+    // Link the first mention of each candidate, plus one made-up link (the server must drop it).
+    revised = target
+    for (const c of r.linkCandidates ?? []) {
+      const w = c.words[0]
+      revised = revised.replace(w, w === c.name ? `[[${c.name}]]` : `[[${c.name}|${w}]]`)
+    }
+    revised += '\n\n[[存在しないページ]]'
+  }
   const summary = `テスト用の提案（${r.preset}${r.volume && r.volume !== 'auto' ? ', ' + r.volume : ''}${r.web ? ', web' : ''}）`
   if (onText) {
     // Stream it like the model does: partway, a pause, then the rest.

@@ -16,9 +16,9 @@ import {
 } from './auth.js'
 import { normalizePageName, parentName, validatePageName } from '../shared/pageName.js'
 import { matchesAll, searchTerms, snippet } from '../shared/search.js'
-import { AI_NEEDS_WEB, isAiPreset, isAiVolume, type RelatedPage, type Reviser } from './ai.js'
+import { AI_NEEDS_WEB, AI_NO_WEB, isAiPreset, isAiVolume, type LinkCandidate, type RelatedPage, type Reviser } from './ai.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
-import { extractWikiTargets, rewriteWikiLinks } from '../shared/markdown/wikilinks.js'
+import { extractWikiTargets, rewriteWikiLinks, unwrapWikiLinks } from '../shared/markdown/wikilinks.js'
 import { diffHunks, groupChanges } from '../shared/diff.js'
 
 export type Role = 'owner' | 'editor' | 'viewer'
@@ -49,6 +49,7 @@ const AI_DAILY_LIMIT = 100
 const AI_RELATED_PAGES = 6
 const AI_RELATED_EACH = 4000
 const AI_RELATED_TOTAL = 15_000
+const AI_LINK_CANDIDATES = 40
 /** Rows are capped at 2 MB on Durable Objects: files are stored in 1 MB chunks. */
 const CHUNK = 1024 * 1024
 
@@ -442,6 +443,22 @@ export function createApp(db: DB, cfg: AppConfig) {
   }
 
   /**
+   * "links" task: pages (other than this one) whose full name or last part occurs in the
+   * target text outside existing links and code, longest first.
+   */
+  function linkCandidates(wikiId: string, pid: string, target: string): LinkCandidate[] {
+    const linked = new Set(extractWikiTargets(target))
+    const plain = target.replace(/```[\s\S]*?```|`[^`\n]*`|\[\[[^\]\n]*\]\]|https?:\/\/\S+/g, ' ')
+    const out: LinkCandidate[] = []
+    for (const p of db.prepare('SELECT id, name FROM pages WHERE wiki_id = ?').all(wikiId) as { id: string; name: string }[]) {
+      if (p.id === pid || linked.has(p.name)) continue
+      const words = [...new Set([p.name, p.name.split('/').pop()!])].filter((w) => w.length >= 2 && plain.includes(w))
+      if (words.length) out.push({ name: p.name, words })
+    }
+    return out.sort((a, b) => b.words[0].length - a.words[0].length).slice(0, AI_LINK_CANDIDATES)
+  }
+
+  /**
    * Background for AI suggestions: pages this one links to (from the text being edited),
    * pages linking here, and the parent page.  Capped in count and size.
    */
@@ -636,6 +653,15 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (!isAiVolume(volume)) return c.json({ error: 'invalid_volume' }, 400)
     const instruction = typeof b.instruction === 'string' ? b.instruction.slice(0, 2000) : ''
 
+    const target = content.slice(start, end)
+    const pid = c.req.param('pid')!
+    const candidates = preset === 'links' ? linkCandidates(wikiId, pid, target) : []
+    // Nothing to link: answer without asking the model (and without counting a use).
+    if (preset === 'links' && candidates.length === 0) {
+      const none = { revised: target, summary: 'リンクにできるページ名は見つかりませんでした。', sources: [], related: [], remaining: null }
+      return b.stream === true ? new Response(JSON.stringify({ done: none }) + '\n', { headers: { 'content-type': 'application/x-ndjson; charset=utf-8' } }) : c.json(none)
+    }
+
     const uid = c.get('user').id
     const day = new Date().toISOString().slice(0, 10)
     const used = (db.prepare('SELECT count FROM ai_usage WHERE user_id = ? AND day = ?').get(uid, day) as { count: number } | undefined)?.count ?? 0
@@ -643,15 +669,19 @@ export function createApp(db: DB, cfg: AppConfig) {
     db.prepare('INSERT INTO ai_usage (user_id, day, count) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1').run(uid, day)
     db.prepare('DELETE FROM ai_usage WHERE day < ?').run(new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10))
 
-    const target = content.slice(start, end)
-    const related = b.wiki === true ? relatedPages(wikiId, c.req.param('pid')!, page.name, content) : []
-    const req = { wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: b.web === true || AI_NEEDS_WEB.has(preset), related }
+    const related = b.wiki === true ? relatedPages(wikiId, pid, page.name, content) : []
+    const req = { wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: !AI_NO_WEB.has(preset) && (b.web === true || AI_NEEDS_WEB.has(preset)), related, linkCandidates: candidates }
+    // New [[links]] must point at pages that exist (the model may invent some).
+    const exists = (name: string) =>
+      !!(db.prepare('SELECT 1 FROM pages WHERE wiki_id = ? AND name = ?').get(wikiId, name) ?? db.prepare('SELECT 1 FROM page_aliases WHERE wiki_id = ? AND name = ?').get(wikiId, name))
+    const before = new Set(extractWikiTargets(target))
     const remaining = AI_DAILY_LIMIT - used - 1
     const finish = (r: Awaited<ReturnType<Reviser>>) => {
       // Keep the target's trailing-newline shape so the splice stays clean.
       let revised = r.revised.replace(/\r\n?/g, '\n')
       const trail = (t: string) => /\n*$/.exec(t)![0]
       revised = revised.replace(/\n*$/, '') + trail(target)
+      if (revised.includes('[[')) revised = unwrapWikiLinks(revised, (t) => !before.has(t) && !exists(t))
       // Only plain web links reach the client (they may be pasted into the page).
       const sources = (r.sources ?? []).filter((s) => /^https?:\/\//.test(s.uri)).map((s) => ({ uri: s.uri, title: s.title?.slice(0, 200) }))
       return { revised, summary: r.summary, sources, related: related.map((p) => p.name), remaining }
