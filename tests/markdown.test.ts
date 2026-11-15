@@ -304,3 +304,36 @@ describe('history diff', () => {
     ])
   })
 })
+
+import { tableTab, toggleWrap, type TextEdit } from '../shared/markdown/inline'
+
+const applyEdit = (src: string, ed: TextEdit) => {
+  const out = src.slice(0, ed.from) + ed.text + src.slice(ed.to)
+  return out.slice(0, ed.selStart) + '[' + out.slice(ed.selStart, ed.selEnd) + ']' + out.slice(ed.selEnd)
+}
+
+describe('⌘B / ⌘I', () => {
+  it('wraps, unwraps and inserts an empty pair', () => {
+    expect(applyEdit('a word b', toggleWrap('a word b', 2, 6, '**'))).toBe('a **[word]** b')
+    expect(applyEdit('a **word** b', toggleWrap('a **word** b', 4, 8, '**'))).toBe('a [word] b')
+    expect(applyEdit('a **word** b', toggleWrap('a **word** b', 2, 10, '**'))).toBe('a [word] b')
+    expect(applyEdit('ab', toggleWrap('ab', 1, 1, '**'))).toBe('a**[]**b')
+    expect(applyEdit('a word b', toggleWrap('a word b', 1, 7, '*'))).toBe('a *[word]* b') // spaces stay outside
+    expect(applyEdit('a *word* b', toggleWrap('a *word* b', 3, 7, '*'))).toBe('a [word] b')
+    // italic inside bold: the stars around are bold, so this adds italic
+    expect(applyEdit('**word**', toggleWrap('**word**', 2, 6, '*'))).toBe('***[word]***')
+  })
+})
+
+describe('Tab in a table', () => {
+  const t = '| a | bb |\n|---|----|\n| c | d |\n\nafter'
+  it('moves to the next / previous cell, skipping the delimiter row, and adds a row at the end', () => {
+    expect(applyEdit(t, tableTab(t, 2, false)!)).toBe('| a | [bb] |\n|---|----|\n| c | d |\n\nafter')
+    expect(applyEdit(t, tableTab(t, 7, false)!)).toBe('| a | bb |\n|---|----|\n| [c] | d |\n\nafter')
+    expect(applyEdit(t, tableTab(t, 24, true)!)).toBe('| a | [bb] |\n|---|----|\n| c | d |\n\nafter')
+    expect(applyEdit(t, tableTab(t, 24, false)!)).toBe('| a | bb |\n|---|----|\n| c | [d] |\n\nafter')
+    expect(applyEdit(t, tableTab(t, 28, false)!)).toBe('| a | bb |\n|---|----|\n| c | d |\n| []  |   |\n\nafter')
+    expect(applyEdit(t, tableTab(t, 2, true)!)).toBe('| [a] | bb |\n|---|----|\n| c | d |\n\nafter')
+    expect(tableTab(t, t.length - 1, false)).toBe(null)
+  })
+})

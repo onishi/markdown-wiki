@@ -25,7 +25,9 @@ export function WikiHome() {
       ) : (
         <>
           <section>
-            <h3>最近更新されたページ</h3>
+            <h3>
+              最近更新されたページ <Link to={`/w/${wiki.slug}/changes`} className="small h-link">すべての更新 →</Link>
+            </h3>
             <ul className="page-list">
               {recent.map((p) => (
                 <li key={p.id}>

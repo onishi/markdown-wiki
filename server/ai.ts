@@ -12,15 +12,23 @@ const MODEL = 'gemini-2.5-flash'
 export const AI_PRESETS = {
   auto: 'お任せで改善: 誤字脱字、わかりにくい表現、見出しや箇条書きの構成を直す。',
   typo: '誤字脱字・表記ゆれ・文法の誤りだけを直す。表現や構成は変えない。',
+  factcheck:
+    '誤情報の訂正: 事実・数値・日付・固有名詞・用語の誤りや古くなった情報を Google 検索で確認し、正しい内容に直す。検索で誤りと確認できない箇所は変えない。表現や構成は変えない。summary には直した箇所を「誤 → 正」の形で挙げる（誤りがなければそう書く）。',
   clarify: '読みやすくする: 長い文を分け、順序や見出し・箇条書きを整理する。情報は減らさない。',
   trim: '簡潔にする: 重複や冗長な言い回しを削る。必要な情報は残す。',
   expand: '項目を増やす: 足りない観点を見出しや箇条として追加する。内容が本文から分からない項目は「(TBD)」とだけ書く。',
   tbd: '「(TBD)」「TODO」など書きかけの箇所を、本文から分かる範囲で埋める。分からない箇所はそのまま残す。それ以外は変えない。',
   table: '列挙されている情報を、適切な列を持つ Markdown の表に整理する。',
   summary: '冒頭に 2〜4 行の要約（箇条書き）を追加する。本文は変えない。',
+  links:
+    'リンクを張る: 【リンクにできるページ】にあるページを指している語句を wiki リンクにする。語句がページ名と同じなら [[ページ名]]、違うなら [[ページ名|語句]] と書く。各ページにつき最初の 1 か所だけ。たまたま同じ文字列でも別の意味で使われている箇所、見出し、コード、URL、既存のリンクの中はリンクにしない。語句を [[ ]] で囲むだけにし、前後に空白を足さない。リンク以外は一字一句変えない。summary にはリンクにした語句を挙げる。',
 } as const
 export type AiPreset = keyof typeof AI_PRESETS
 export const isAiPreset = (p: unknown): p is AiPreset => typeof p === 'string' && p in AI_PRESETS
+/** Tasks that only make sense with Google Search (web mode is forced on). */
+export const AI_NEEDS_WEB: ReadonlySet<AiPreset> = new Set(['factcheck'])
+/** Tasks about the wiki itself: no web search. */
+export const AI_NO_WEB: ReadonlySet<AiPreset> = new Set(['links'])
 
 /** How long the result should be compared with the target ("auto": whatever the task needs). */
 export const AI_VOLUMES = {
@@ -46,6 +54,21 @@ export interface ReviseRequest {
   instruction: string
   /** Let the model look things up with Google Search (grounding). */
   web?: boolean
+  /** Other pages of the wiki given as background (links, backlinks, parent). */
+  related?: RelatedPage[]
+  /** "links" task: existing pages whose name (or last part) appears in the target. */
+  linkCandidates?: LinkCandidate[]
+}
+export interface LinkCandidate {
+  name: string
+  /** The words found in the text that may refer to it (the name and/or its last part). */
+  words: string[]
+}
+export interface RelatedPage {
+  name: string
+  /** How it relates to this page, in words for the prompt (e.g. "このページからのリンク先"). */
+  relation: string
+  content: string
 }
 export interface AiSource {
   uri: string
@@ -57,37 +80,46 @@ export interface ReviseResult {
   /** Web pages the answer was grounded on (web mode only). */
   sources?: AiSource[]
 }
-export type Reviser = (r: ReviseRequest) => Promise<ReviseResult>
+/** `onText` (optional) receives the raw answer as it streams in (the whole text so far). */
+export type Reviser = (r: ReviseRequest, onText?: (soFar: string) => void) => Promise<ReviseResult>
 
 const COMMON_RULES = `- 書き換えるのは「対象」だけです。返す revised は、書き換え後の「対象」部分の全文です（ページ全体ではありません。対象の外の文章を含めないでください）。
 - 指示に関係しない箇所は一字一句変えないでください。好みで言い回しを変えないでください。
 - 文体（です・ます／である）、用語、表記は元の文章に合わせてください。
-- Markdown の構造を保ってください。[[ページ名]] や [[ページ名|表示名]] の wiki リンク、URL、画像、コードブロックの中身は変えないでください。`
+- Markdown の構造を保ってください。[[ページ名]] や [[ページ名|表示名]] の wiki リンク、URL、画像、コードブロックの中身は変えないでください。
+- 【wiki 内の関連ページ】があれば、その内容と矛盾しないようにしてください。関連ページに書かれている事実は、本文の事実と同じように使ってかまいません。関連ページへのリンクを足すときは、示されたページ名をそのまま使って [[ページ名]] と書いてください。`
+
+/**
+ * The answer comes in tags rather than JSON: it streams (the revised text can be shown
+ * as it is written) and Google Search grounding cannot be combined with JSON output.
+ */
+const FORMAT = (summary: string) => `【出力形式】次の形式だけを出力してください。前後に説明やコードフェンスを付けないでください。
+<summary>${summary}</summary>
+<revised>
+書き換え後の対象部分の全文（変更が不要なら対象をそのまま）
+</revised>`
 
 const SYSTEM = `あなたはチームで使う Markdown wiki の編集を手伝うアシスタントです。
 指定された「対象」の部分を、指示に従って書き換えた結果を返します。
 
 【ルール】
 ${COMMON_RULES}
-- 本文に書かれていない事実・数値・固有名詞を作らないでください。推測で補わないでください。
-- 本文にない URL、[[リンク]]、コマンド、設定値を新しく作らないでください。
-- summary には、何をどう変えたかを日本語 1〜2 文で書いてください。変更が不要なら revised に対象をそのまま入れ、summary にその旨を書いてください。`
+- 本文（と関連ページ）に書かれていない事実・数値・固有名詞を作らないでください。推測で補わないでください。ただし対象が空で本文を新しく書くときは、確実に知っている事実だけを書き、不確かな数値・日付・固有名詞は「(TBD)」としてください。
+- 本文にない URL、コマンド、設定値、関連ページ以外への [[リンク]] を新しく作らないでください。
+- 変更が不要なら revised に対象をそのまま入れ、summary にその旨を書いてください。
 
-/** Web mode: Google Search grounding cannot be combined with JSON output, so the answer comes in tags. */
+${FORMAT('何をどう変えたか（日本語 1〜2 文）')}`
+
 const SYSTEM_WEB = `あなたはチームで使う Markdown wiki の編集を手伝うアシスタントです。
 指定された「対象」の部分を、指示に従って書き換えた結果を返します。必要に応じて Google 検索で調べてください。
 
 【ルール】
 ${COMMON_RULES}
-- 本文にない事実・数値・固有名詞は、Google 検索の結果で確認できたものだけを追加してください。確認できないことは書かず、推測で補わないでください。「(TBD)」は検索で確認できた場合だけ埋めてください。
+- 本文と関連ページにない事実・数値・固有名詞は、Google 検索の結果で確認できたものだけを追加してください。確認できないことは書かず、推測で補わないでください。「(TBD)」は検索で確認できた場合だけ埋めてください。
 - ページタイトル（主題）について調べてください。同名の別のものと取り違えないでください。
-- 本文に URL や出典は書かないでください（出典は別に表示されます）。本文にない [[リンク]]、コマンド、設定値も作らないでください。
+- 本文に URL や出典は書かないでください（出典は別に表示されます）。本文にないコマンド、設定値、関連ページ以外への [[リンク]] も作らないでください。
 
-【出力形式】次の形式だけを出力してください。前後に説明やコードフェンスを付けないでください。
-<summary>何をどう変えたか（日本語 1〜2 文。検索で確認した内容を足した場合はそのことも）</summary>
-<revised>
-書き換え後の対象部分の全文（変更が不要なら対象をそのまま）
-</revised>`
+${FORMAT('何をどう変えたか（日本語 1〜2 文。検索で確認した内容を足した場合はそのことも）')}`
 
 /** Pull summary / revised out of the tagged web-mode answer. */
 export function parseTagged(text: string): { revised: string; summary: string } {
@@ -130,16 +162,35 @@ export function pageInfo(wikiName: string, pageName: string): string {
 export function buildPrompt(r: ReviseRequest): string {
   const whole = r.start === 0 && r.end === r.page.length
   const target = r.page.slice(r.start, r.end)
-  const task = [AI_PRESETS[r.preset], AI_VOLUMES[r.volume ?? 'auto'], r.instruction.trim() && `追加の指示: ${r.instruction.trim()}`]
+  const blank = target.trim() === ''
+  const task = [
+    blank && 'ページは空です。ページタイトル（主題）について、以下の指示に沿って本文を新しく書いてください。見出しは「##」から始め、タイトルの見出しは付けないでください。',
+    AI_PRESETS[r.preset], AI_VOLUMES[r.volume ?? 'auto'], r.instruction.trim() && `追加の指示: ${r.instruction.trim()}`]
     .filter(Boolean)
     .join('\n')
+  const related = r.related?.length
+    ? `【wiki 内の関連ページ】（参考資料。書き換えるのは対象だけです）
+${r.related.map((p) => `<related name="${p.name.replace(/"/g, '&quot;')}" relation="${p.relation}">\n${p.content.replace(/<\/related>/g, '<\\/related>')}\n</related>`).join('\n')}
+
+`
+    : ''
+  const candidates = r.linkCandidates?.length
+    ? `【リンクにできるページ】（wiki に実在するページ。本文中に名前が出てくるもの）
+${r.linkCandidates.map((c) => `- ${c.name}${c.words.some((w) => w !== c.name) ? `（本文中の表記: ${c.words.map((w) => `「${w}」`).join('')}）` : ''}`).join('\n')}
+
+`
+    : ''
   return `${pageInfo(r.wikiName, r.pageName)}
 
-【指示】
+${related}${candidates}【指示】
 ${task}
 
 ${
-  whole
+  blank
+    ? `【対象】（空のページ。書いた本文全体を revised として返してください）
+<target>
+</target>`
+    : whole
     ? `【対象】（ページ全体）
 <target>
 ${target}
@@ -157,43 +208,35 @@ ${target}
 }
 
 export function geminiReviser(apiKey: string): Reviser {
-  // systemInstruction / JSON schema need v1beta (v1 rejects "Developer instruction").
+  // systemInstruction needs v1beta (v1 rejects "Developer instruction").
   const ai = new GoogleGenAI({ apiKey, apiVersion: 'v1beta' })
-  return async (r) => {
-    const res = await ai.models.generateContent({
+  return async (r, onText) => {
+    const stream = await ai.models.generateContentStream({
       model: MODEL,
       contents: buildPrompt(r),
-      config: r.web
-        ? { systemInstruction: SYSTEM_WEB, tools: [{ googleSearch: {} }] }
-        : {
-            systemInstruction: SYSTEM,
-            responseMimeType: 'application/json',
-            responseJsonSchema: {
-              type: 'object',
-              properties: {
-                revised: { type: 'string', description: '書き換え後の対象部分の全文（Markdown）' },
-                summary: { type: 'string', description: '変更内容の要約（日本語 1〜2 文）' },
-              },
-              required: ['revised', 'summary'],
-            },
-          },
+      config: r.web ? { systemInstruction: SYSTEM_WEB, tools: [{ googleSearch: {} }] } : { systemInstruction: SYSTEM },
     })
     let text = ''
-    try {
-      text = res.text ?? ''
-    } catch {
-      // blocked or empty response
+    const chunks: { uri: string; title?: string }[] = []
+    for await (const res of stream) {
+      let t = ''
+      try {
+        t = res.text ?? ''
+      } catch {
+        // blocked or empty chunk
+      }
+      if (t) {
+        text += t
+        onText?.(text)
+      }
+      for (const c of res.candidates?.[0]?.groundingMetadata?.groundingChunks ?? []) if (c.web?.uri) chunks.push({ uri: c.web.uri, title: c.web.title })
     }
-    if (r.web) {
-      const out = parseTagged(text)
-      const seen = new Set<string>()
-      const chunks = (res.candidates?.[0]?.groundingMetadata?.groundingChunks ?? []).filter((c) => c.web?.uri && !seen.has(c.web.uri) && seen.add(c.web.uri))
-      const sources = await Promise.all(chunks.slice(0, 8).map((c) => resolveSource(c.web!.uri!, c.web!.title)))
-      return { ...out, sources }
-    }
-    const out = JSON.parse(text) as Partial<ReviseResult>
-    if (typeof out.revised !== 'string') throw new Error('bad_response')
-    return { revised: out.revised, summary: typeof out.summary === 'string' ? out.summary : '' }
+    const out = parseTagged(text)
+    if (!r.web) return out
+    const seen = new Set<string>()
+    const unique = chunks.filter((c) => !seen.has(c.uri) && seen.add(c.uri))
+    const sources = await Promise.all(unique.slice(0, 8).map((c) => resolveSource(c.uri, c.title)))
+    return { ...out, sources }
   }
 }
 
@@ -201,11 +244,26 @@ export function geminiReviser(apiKey: string): Reviser {
  * Deterministic stand-in for automated tests (enabled only together with dev login):
  * fixes "teh" → "the" and appends a line to the target.
  */
-export const fakeReviser: Reviser = async (r) => {
+export const fakeReviser: Reviser = async (r, onText) => {
   const target = r.page.slice(r.start, r.end)
-  return {
-    revised: target.replace(/teh/g, 'the') + '\n\n（AI 追記）',
-    summary: `テスト用の提案（${r.preset}${r.volume && r.volume !== 'auto' ? ', ' + r.volume : ''}${r.web ? ', web' : ''}）`,
-    sources: r.web ? [{ uri: 'https://example.com/source', title: 'example.com' }] : undefined,
+  let revised = target.replace(/teh/g, 'the') + '\n\n（AI 追記）'
+  if (r.preset === 'links') {
+    // Link the first mention of each candidate, plus one made-up link (the server must drop it).
+    revised = target
+    for (const c of r.linkCandidates ?? []) {
+      const w = c.words[0]
+      revised = revised.replace(w, w === c.name ? `[[${c.name}]]` : `[[${c.name}|${w}]]`)
+    }
+    revised += '\n\n[[存在しないページ]]'
   }
+  const summary = `テスト用の提案（${r.preset}${r.volume && r.volume !== 'auto' ? ', ' + r.volume : ''}${r.web ? ', web' : ''}）`
+  if (onText) {
+    // Stream it like the model does: partway, a pause, then the rest.
+    const whole = `<summary>${summary}</summary>\n<revised>\n${revised}\n</revised>`
+    const cut = whole.indexOf('<revised>') + '<revised>\n'.length + Math.ceil(revised.length / 2)
+    onText(whole.slice(0, cut))
+    await new Promise((res) => setTimeout(res, r.instruction.includes('[slow]') ? 1500 : 50))
+    onText(whole)
+  }
+  return { revised, summary, sources: r.web ? [{ uri: 'https://example.com/source', title: 'example.com' }] : undefined }
 }

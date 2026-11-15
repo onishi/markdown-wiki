@@ -44,6 +44,8 @@ export function usePageSaver(wikiId: string, page: Page, initialContent: string,
   const blocked = useRef(!!initialConflict)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const backoff = useRef(2000)
+  // Origin of the next save ("ai", "restore"): recorded with that revision for the history.
+  const via = useRef<{ v: 'ai' | 'restore' } | null>(null)
   const pageId = page.id
 
   const writeDraft = useCallback(
@@ -77,8 +79,10 @@ export function usePageSaver(wikiId: string, page: Page, initialContent: string,
     }
     inflight.current = true
     setStatus('saving')
+    const marked = via.current
     try {
-      const r = await api<{ page: Page }>('PUT', `/api/wikis/${wikiId}/pages/${pageId}`, { content: sending, baseVersion: base.current.version })
+      const r = await api<{ page: Page }>('PUT', `/api/wikis/${wikiId}/pages/${pageId}`, { content: sending, baseVersion: base.current.version, via: marked?.v })
+      if (via.current === marked) via.current = null
       base.current = { version: r.page.version, content: r.page.content }
       backoff.current = 2000
       inflight.current = false
@@ -186,6 +190,10 @@ export function usePageSaver(wikiId: string, page: Page, initialContent: string,
     resolveConflict,
     applyRemote,
     baseVersion: () => base.current.version,
+    /** Mark the next saved revision as made by an accepted AI suggestion or a restore. */
+    markVia: (v: 'ai' | 'restore') => {
+      via.current = { v }
+    },
     mine: () => latest.current,
   }
 }

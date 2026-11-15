@@ -14,11 +14,12 @@ import {
   sessionUser,
   upsertGoogleUser,
 } from './auth.js'
-import { normalizePageName, validatePageName } from '../shared/pageName.js'
+import { normalizePageName, parentName, validatePageName } from '../shared/pageName.js'
 import { matchesAll, searchTerms, snippet } from '../shared/search.js'
-import { isAiPreset, isAiVolume, type Reviser } from './ai.js'
+import { AI_NEEDS_WEB, AI_NO_WEB, isAiPreset, isAiVolume, type LinkCandidate, type RelatedPage, type Reviser } from './ai.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
-import { extractWikiTargets, rewriteWikiLinks } from '../shared/markdown/wikilinks.js'
+import { applySuggestedLinks, extractWikiTargets, rewriteWikiLinks, unwrapWikiLinks } from '../shared/markdown/wikilinks.js'
+import { diffHunks, groupChanges } from '../shared/diff.js'
 
 export type Role = 'owner' | 'editor' | 'viewer'
 const RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 }
@@ -44,6 +45,11 @@ const MAX_FILE = 10 * 1024 * 1024
 /** AI suggestions: target size (the model returns it whole) and requests per user per day. */
 const AI_MAX_TARGET = 30_000
 const AI_DAILY_LIMIT = 100
+/** Related pages sent as background: how many, and characters each / in total. */
+const AI_RELATED_PAGES = 6
+const AI_RELATED_EACH = 4000
+const AI_RELATED_TOTAL = 15_000
+const AI_LINK_CANDIDATES = 40
 /** Rows are capped at 2 MB on Durable Objects: files are stored in 1 MB chunks. */
 const CHUNK = 1024 * 1024
 
@@ -419,24 +425,128 @@ export function createApp(db: DB, cfg: AppConfig) {
     const pid = c.req.param('pid')
     const page = db.prepare('SELECT name FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, pid) as { name: string } | undefined
     if (!page) return c.json({ error: 'not_found' }, 404)
-    const aliases = (db.prepare('SELECT name FROM page_aliases WHERE wiki_id = ? AND page_id = ?').all(wikiId, pid) as { name: string }[]).map((a) => a.name)
-    const names = new Set([page.name, ...aliases])
-    const rows = db
-      .prepare("SELECT id, name, content, updated_at AS updatedAt FROM pages WHERE wiki_id = ? AND id != ? AND instr(content, '[[') > 0")
-      .all(wikiId, pid) as { id: string; name: string; content: string; updatedAt: number }[]
-    const pages = rows
-      .filter((r) => [...names].some((n) => r.content.includes(n.split('/').pop()!)))
-      .filter((r) => extractWikiTargets(r.content).some((t) => names.has(normalizePageName(t))))
+    const pages = backlinkRows(wikiId, pid, page.name)
       .map((r) => ({ id: r.id, name: r.name, updatedAt: r.updatedAt }))
       .sort((a, b) => a.name.localeCompare(b.name, 'ja'))
     return c.json({ pages })
   })
+
+  function backlinkRows(wikiId: string, pid: string, pageName: string) {
+    const aliases = (db.prepare('SELECT name FROM page_aliases WHERE wiki_id = ? AND page_id = ?').all(wikiId, pid) as { name: string }[]).map((a) => a.name)
+    const names = new Set([pageName, ...aliases])
+    const rows = db
+      .prepare("SELECT id, name, content, updated_at AS updatedAt FROM pages WHERE wiki_id = ? AND id != ? AND instr(content, '[[') > 0")
+      .all(wikiId, pid) as { id: string; name: string; content: string; updatedAt: number }[]
+    return rows
+      .filter((r) => [...names].some((n) => r.content.includes(n.split('/').pop()!)))
+      .filter((r) => extractWikiTargets(r.content).some((t) => names.has(normalizePageName(t))))
+  }
+
+  /**
+   * "links" task: pages (other than this one) whose full name or last part occurs in the
+   * target text outside existing links and code, longest first.
+   */
+  function linkCandidates(wikiId: string, pid: string, target: string): LinkCandidate[] {
+    const linked = new Set(extractWikiTargets(target))
+    const plain = target.replace(/```[\s\S]*?```|`[^`\n]*`|\[\[[^\]\n]*\]\]|https?:\/\/\S+/g, ' ')
+    const out: LinkCandidate[] = []
+    for (const p of db.prepare('SELECT id, name FROM pages WHERE wiki_id = ?').all(wikiId) as { id: string; name: string }[]) {
+      if (p.id === pid || linked.has(p.name)) continue
+      const words = [...new Set([p.name, p.name.split('/').pop()!])].filter((w) => w.length >= 2 && plain.includes(w))
+      if (words.length) out.push({ name: p.name, words })
+    }
+    return out.sort((a, b) => b.words[0].length - a.words[0].length).slice(0, AI_LINK_CANDIDATES)
+  }
+
+  /**
+   * Background for AI suggestions: pages this one links to (from the text being edited),
+   * pages linking here, and the parent page.  Capped in count and size.
+   */
+  function relatedPages(wikiId: string, pid: string, pageName: string, content: string): RelatedPage[] {
+    const out: RelatedPage[] = []
+    const seen = new Set([pid])
+    let budget = AI_RELATED_TOTAL
+    const add = (row: { id: string; name: string; content: string } | undefined, relation: string) => {
+      if (!row || seen.has(row.id) || out.length >= AI_RELATED_PAGES || budget <= 0 || !row.content.trim()) return
+      seen.add(row.id)
+      let text = row.content.slice(0, Math.min(AI_RELATED_EACH, budget))
+      if (text.length < row.content.length) text += '\n…（以下省略）'
+      budget -= text.length
+      out.push({ name: row.name, relation, content: text })
+    }
+    const byName = (name: string) =>
+      (db.prepare('SELECT id, name, content FROM pages WHERE wiki_id = ? AND name = ?').get(wikiId, name) ??
+        db.prepare('SELECT p.id, p.name, p.content FROM page_aliases a JOIN pages p ON p.id = a.page_id WHERE a.wiki_id = ? AND a.name = ?').get(wikiId, name)) as
+        | { id: string; name: string; content: string }
+        | undefined
+    for (const t of extractWikiTargets(content).slice(0, 20)) if (out.length < 4) add(byName(normalizePageName(t)), 'このページからのリンク先')
+    const parent = parentName(pageName)
+    if (parent) add(byName(parent), '親ページ')
+    for (const r of backlinkRows(wikiId, pid, pageName).sort((a, b) => b.updatedAt - a.updatedAt)) add(r, 'このページへリンクしているページ')
+    return out
+  }
 
   app.get('/api/wikis/:wid/pages/:pid', (c) => {
     const { wikiId } = need(c, 'viewer')
     const p = pageRow(wikiId, c.req.param('pid'))
     if (!p) return c.json({ error: 'not_found' }, 404)
     return c.json({ page: p })
+  })
+
+  /**
+   * Recent changes across the wiki: revisions grouped into edit sessions (per page and
+   * person), newest first, each with its line counts.  `before` (ms) pages further back.
+   */
+  app.get('/api/wikis/:wid/changes', (c) => {
+    const { wikiId } = need(c, 'viewer')
+    const before = Number(c.req.query('before') ?? Number.MAX_SAFE_INTEGER)
+    const LIMIT = 500
+    type Row = { pageId: string; name: string; version: number; createdAt: number; length: number; byName: string | null; byEmail: string | null; via: string | null }
+    let rows = db
+      .prepare(
+        `SELECT r.page_id AS pageId, p.name, r.version, r.created_at AS createdAt, length(r.content) AS length, u.name AS byName, u.email AS byEmail, r.via
+         FROM page_revisions r JOIN pages p ON p.id = r.page_id LEFT JOIN users u ON u.id = r.created_by
+         WHERE p.wiki_id = ? AND r.created_at < ? ORDER BY r.created_at DESC, r.rowid DESC LIMIT ?`,
+      )
+      .all(wikiId, before, LIMIT + 1) as Row[]
+    let next: number | null = null
+    if (rows.length > LIMIT) {
+      // Cut at a timestamp boundary so the next request (created_at < next) misses nothing.
+      const cut = rows[LIMIT - 1].createdAt
+      const kept = rows.filter((r) => r.createdAt > cut)
+      if (kept.length) {
+        rows = kept
+        next = cut + 1
+      } else {
+        rows = rows.slice(0, LIMIT)
+        next = cut
+      }
+    }
+    const groups = groupChanges(rows)
+    const content = db.prepare('SELECT content FROM page_revisions WHERE page_id = ? AND version = ?')
+    const text = (pid: string, v: number) => (content.get(pid, v) as { content: string } | undefined)?.content ?? ''
+    const changes = groups.map((g) => {
+      let added = 0
+      let removed = 0
+      for (const s of diffHunks(g.first.version > 1 ? text(g.first.pageId, g.first.version - 1) : '', text(g.last.pageId, g.last.version))) {
+        if ('id' in s) (added += s.add.length), (removed += s.del.length)
+      }
+      return {
+        pageId: g.last.pageId,
+        name: g.last.name,
+        from: g.first.version,
+        to: g.last.version,
+        count: g.count,
+        at: g.last.createdAt,
+        byName: g.last.byName,
+        byEmail: g.last.byEmail,
+        via: g.via,
+        created: g.first.version === 1,
+        added,
+        removed,
+      }
+    })
+    return c.json({ changes, next })
   })
 
   /** Revision metadata, newest first (content is fetched per version). */
@@ -447,7 +557,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     const before = Number(c.req.query('before') ?? Number.MAX_SAFE_INTEGER)
     const rows = db
       .prepare(
-        `SELECT r.version, r.created_at AS createdAt, length(r.content) AS length, u.name AS byName, u.email AS byEmail
+        `SELECT r.version, r.created_at AS createdAt, length(r.content) AS length, u.name AS byName, u.email AS byEmail, r.via
          FROM page_revisions r LEFT JOIN users u ON u.id = r.created_by
          WHERE r.page_id = ? AND r.version < ? ORDER BY r.version DESC LIMIT 501`,
       )
@@ -491,8 +601,10 @@ export function createApp(db: DB, cfg: AppConfig) {
   /** Optimistic concurrency: the client sends the version it edited from. */
   app.put('/api/wikis/:wid/pages/:pid', async (c) => {
     const { wikiId } = need(c, 'editor')
-    const b = await body<{ content?: string; baseVersion?: number }>(c)
+    const b = await body<{ content?: string; baseVersion?: number; via?: string }>(c)
     if (typeof b.content !== 'string' || typeof b.baseVersion !== 'number') return c.json({ error: 'invalid' }, 400)
+    // Shown in the history ("AI の提案を採用", "復元"); anything else is ordinary typing.
+    const via = b.via === 'ai' || b.via === 'restore' ? b.via : null
     if (b.content.length > MAX_CONTENT) return c.json({ error: 'too_large' }, 413)
     const pid = c.req.param('pid')
     const uid = c.get('user').id
@@ -509,7 +621,7 @@ export function createApp(db: DB, cfg: AppConfig) {
       const now = Date.now()
       const v = cur.version + 1
       db.prepare('UPDATE pages SET content = ?, version = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(content, v, now, uid, pid)
-      db.prepare('INSERT INTO page_revisions (page_id, version, content, created_at, created_by) VALUES (?, ?, ?, ?, ?)').run(pid, v, content, now, uid)
+      db.prepare('INSERT INTO page_revisions (page_id, version, content, created_at, created_by, via) VALUES (?, ?, ?, ?, ?, ?)').run(pid, v, content, now, uid, via)
       return { status: 200 as const, page: pageRow(wikiId, pid)! }
     })
     if (result.status === 404) return c.json({ error: 'not_found' }, 404)
@@ -528,18 +640,27 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (!w.ai_enabled) return c.json({ error: 'ai_disabled' }, 403)
     const page = db.prepare('SELECT name FROM pages WHERE wiki_id = ? AND id = ?').get(wikiId, c.req.param('pid')) as { name: string } | undefined
     if (!page) return c.json({ error: 'not_found' }, 404)
-    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; volume?: string; instruction?: string; web?: boolean }>(c)
+    const b = await body<{ content?: string; start?: number; end?: number; preset?: string; volume?: string; instruction?: string; web?: boolean; wiki?: boolean; stream?: boolean }>(c)
     const content = b.content
     if (typeof content !== 'string' || content.length > MAX_CONTENT) return c.json({ error: 'invalid' }, 400)
     const start = b.start ?? 0
     const end = b.end ?? content.length
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > content.length || start >= end) return c.json({ error: 'invalid_range' }, 400)
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end > content.length || start > end || (start === end && content.trim() !== '')) return c.json({ error: 'invalid_range' }, 400)
     if (end - start > AI_MAX_TARGET) return c.json({ error: 'too_large' }, 413)
     const preset = b.preset ?? 'auto'
     if (!isAiPreset(preset)) return c.json({ error: 'invalid_preset' }, 400)
     const volume = b.volume ?? 'auto'
     if (!isAiVolume(volume)) return c.json({ error: 'invalid_volume' }, 400)
     const instruction = typeof b.instruction === 'string' ? b.instruction.slice(0, 2000) : ''
+
+    const target = content.slice(start, end)
+    const pid = c.req.param('pid')!
+    const candidates = preset === 'links' ? linkCandidates(wikiId, pid, target) : []
+    // Nothing to link: answer without asking the model (and without counting a use).
+    if (preset === 'links' && candidates.length === 0) {
+      const none = { revised: target, summary: 'リンクにできるページ名は見つかりませんでした。', sources: [], related: [], remaining: null }
+      return b.stream === true ? new Response(JSON.stringify({ done: none }) + '\n', { headers: { 'content-type': 'application/x-ndjson; charset=utf-8' } }) : c.json(none)
+    }
 
     const uid = c.get('user').id
     const day = new Date().toISOString().slice(0, 10)
@@ -548,21 +669,69 @@ export function createApp(db: DB, cfg: AppConfig) {
     db.prepare('INSERT INTO ai_usage (user_id, day, count) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1').run(uid, day)
     db.prepare('DELETE FROM ai_usage WHERE day < ?').run(new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10))
 
-    const target = content.slice(start, end)
-    let r
+    const related = b.wiki === true ? relatedPages(wikiId, pid, page.name, content) : []
+    const req = { wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: !AI_NO_WEB.has(preset) && (b.web === true || AI_NEEDS_WEB.has(preset)), related, linkCandidates: candidates }
+    // New [[links]] must point at pages that exist (the model may invent some).
+    const exists = (name: string) =>
+      !!(db.prepare('SELECT 1 FROM pages WHERE wiki_id = ? AND name = ?').get(wikiId, name) ?? db.prepare('SELECT 1 FROM page_aliases WHERE wiki_id = ? AND name = ?').get(wikiId, name))
+    const before = new Set(extractWikiTargets(target))
+    const remaining = AI_DAILY_LIMIT - used - 1
+    const finish = (r: Awaited<ReturnType<Reviser>>) => {
+      // Keep the target's trailing-newline shape so the splice stays clean.
+      let revised = r.revised.replace(/\r\n?/g, '\n')
+      const trail = (t: string) => /\n*$/.exec(t)![0]
+      revised = revised.replace(/\n*$/, '') + trail(target)
+      if (revised.includes('[[')) revised = unwrapWikiLinks(revised, (t) => !before.has(t) && !exists(t))
+      // Linking only adds links: rebuild from the original so nothing else changes.
+      if (preset === 'links') revised = applySuggestedLinks(target, revised)
+      // Only plain web links reach the client (they may be pasted into the page).
+      const sources = (r.sources ?? []).filter((s) => /^https?:\/\//.test(s.uri)).map((s) => ({ uri: s.uri, title: s.title?.slice(0, 200) }))
+      return { revised, summary: r.summary, sources, related: related.map((p) => p.name), remaining }
+    }
+    const ai = cfg.ai
+
+    if (b.stream === true) {
+      // NDJSON: {"text": answer so far} lines while the model writes (throttled), then {"done": result} or {"error": code}.
+      const enc = new TextEncoder()
+      const stream = new ReadableStream<Uint8Array>({
+        async start(ctl) {
+          const send = (o: unknown) => {
+            try {
+              ctl.enqueue(enc.encode(JSON.stringify(o) + '\n'))
+            } catch {
+              // client went away
+            }
+          }
+          let last = 0
+          let pending: string | null = null
+          try {
+            const r = await ai(req, (soFar) => {
+              pending = soFar
+              if (Date.now() - last < 150) return
+              last = Date.now()
+              send({ text: soFar })
+              pending = null
+            })
+            if (pending !== null) send({ text: pending })
+            send({ done: finish(r) })
+          } catch (e) {
+            console.error('ai revise failed', e)
+            send({ error: 'ai_failed' })
+          }
+          try {
+            ctl.close()
+          } catch {}
+        },
+      })
+      return new Response(stream, { headers: { 'content-type': 'application/x-ndjson; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' } })
+    }
+
     try {
-      r = await cfg.ai({ wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: b.web === true })
+      return c.json(finish(await ai(req)))
     } catch (e) {
       console.error('ai revise failed', e)
       return c.json({ error: 'ai_failed' }, 502)
     }
-    // Keep the target's trailing-newline shape so the splice stays clean.
-    let revised = r.revised.replace(/\r\n?/g, '\n')
-    const trail = (t: string) => /\n*$/.exec(t)![0]
-    revised = revised.replace(/\n*$/, '') + trail(target)
-    // Only plain web links reach the client (they may be pasted into the page).
-    const sources = (r.sources ?? []).filter((s) => /^https?:\/\//.test(s.uri)).map((s) => ({ uri: s.uri, title: s.title?.slice(0, 200) }))
-    return c.json({ revised, summary: r.summary, sources, remaining: AI_DAILY_LIMIT - used - 1 })
   })
 
   app.post('/api/wikis/:wid/pages/:pid/rename', async (c) => {
@@ -611,7 +780,7 @@ export function createApp(db: DB, cfg: AppConfig) {
           if (next === p.content) continue
           rewritten++
           db.prepare('UPDATE pages SET content = ?, version = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(next, p.version + 1, now, uid, p.id)
-          db.prepare('INSERT INTO page_revisions (page_id, version, content, created_at, created_by) VALUES (?, ?, ?, ?, ?)').run(p.id, p.version + 1, next, now, uid)
+          db.prepare("INSERT INTO page_revisions (page_id, version, content, created_at, created_by, via) VALUES (?, ?, ?, ?, ?, 'rename')").run(p.id, p.version + 1, next, now, uid)
         }
       }
     })

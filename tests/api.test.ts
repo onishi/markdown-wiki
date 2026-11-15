@@ -223,6 +223,32 @@ describe('pages: save conflicts, rename, hierarchy', () => {
     expect((await out.get(`/api/wikis/${w.id}/pages/${p.id}/revisions`)).status).toBe(404)
   })
 
+  it('lists recent changes across the wiki as edit sessions, with their origin', async () => {
+    const a = await login(app, 'a@example.com')
+    const b = await login(app, 'b@example.com')
+    const w = (await a.post('/api/wikis', { name: 'W' })).json.wiki
+    await a.post(`/api/wikis/${w.id}/invitations`, { email: 'b@example.com', role: 'editor' })
+    await b.get('/api/me')
+    const p = (await a.post(`/api/wikis/${w.id}/pages`, { name: 'P', content: 'one' })).json.page
+    await a.put(`/api/wikis/${w.id}/pages/${p.id}`, { content: 'one\ntwo', baseVersion: 1 })
+    await a.put(`/api/wikis/${w.id}/pages/${p.id}`, { content: 'one\ntwo\nthree', baseVersion: 2, via: 'ai' })
+    const q = (await b.post(`/api/wikis/${w.id}/pages`, { name: 'Q', content: '' })).json.page
+    await b.put(`/api/wikis/${w.id}/pages/${q.id}`, { content: 'x', baseVersion: 1, via: 'bogus' })
+    await b.put(`/api/wikis/${w.id}/pages/${p.id}`, { content: 'ONE\ntwo\nthree', baseVersion: 3, via: 'restore' })
+
+    const r = (await a.get(`/api/wikis/${w.id}/changes`)).json
+    expect(r.next).toBe(null)
+    expect(r.changes.map((c: any) => [c.name, c.byEmail, c.from, c.to, c.created, c.via, c.added, c.removed])).toEqual([
+      ['P', 'b@example.com', 4, 4, false, ['restore'], 1, 1],
+      ['Q', 'b@example.com', 1, 2, true, [], 1, 0],
+      ['P', 'a@example.com', 1, 3, true, ['ai'], 3, 0],
+    ])
+    const revs = (await a.get(`/api/wikis/${w.id}/pages/${p.id}/revisions`)).json.revisions
+    expect(revs.map((x: any) => x.via)).toEqual(['restore', 'ai', null, null])
+    const out = await login(app, 'out@example.com')
+    expect((await out.get(`/api/wikis/${w.id}/changes`)).status).toBe(404)
+  })
+
   it('creates child pages without a parent page and resolves names', async () => {
     const a = await login(app, 'a@example.com')
     const w = (await a.post('/api/wikis', { name: 'W' })).json.wiki

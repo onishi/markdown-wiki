@@ -311,6 +311,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
         <AiDialog
           wikiId={wiki.id}
           pageId={page.id}
+          pageName={page.name}
           content={ai.content}
           selection={ai.selection}
           onClose={() => {
@@ -324,6 +325,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
               setNotice('提案を作っている間にページが更新されたため、採用できませんでした。もう一度お試しください。')
               return
             }
+            saver.markVia('ai')
             editorHandle.current?.replaceAll(next)
             setNotice('AI の提案を採用しました（⌘Z で取り消せます）。')
           }}
@@ -337,6 +339,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           canRestore={canEdit && saver.status !== 'conflict'}
           onClose={() => setDialog(null)}
           onRestore={(content, version) => {
+            saver.markVia('restore')
             saver.onChange(content)
             setDialog(null)
             setNotice(`版 ${version} の内容に戻しました（新しい版として保存されます。元に戻すときも履歴から選べます）。`)
