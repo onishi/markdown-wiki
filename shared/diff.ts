@@ -2,6 +2,9 @@ import { diffComm } from 'node-diff3'
 
 export type DiffLine = { kind: 'same' | 'del' | 'add'; text: string; oldNo?: number; newNo?: number } | { kind: 'skip'; count: number }
 
+/** An empty text has no lines (not one empty line), so creating a page is a pure addition. */
+const splitLines = (t: string) => (t === '' ? [] : t.split('\n'))
+
 /**
  * Line diff of two texts for display: unchanged runs longer than 2×context are
  * collapsed into a `skip` entry.
@@ -12,7 +15,7 @@ export function lineDiff(before: string, after: string, context = 3): { lines: D
   let n = 1
   let added = 0
   let removed = 0
-  for (const part of diffComm(before.split('\n'), after.split('\n')) as { common?: string[]; buffer1?: string[]; buffer2?: string[] }[]) {
+  for (const part of diffComm(splitLines(before), splitLines(after)) as { common?: string[]; buffer1?: string[]; buffer2?: string[] }[]) {
     if (part.common) for (const t of part.common) raw.push({ kind: 'same', text: t, oldNo: o++, newNo: n++ })
     else {
       for (const t of part.buffer1 ?? []) (raw.push({ kind: 'del', text: t, oldNo: o++ }), removed++)
@@ -43,6 +46,8 @@ export interface RevisionMeta {
   length: number
   byName: string | null
   byEmail: string | null
+  /** How it was made: null (typing), 'ai', 'restore', 'rename'. */
+  via?: string | null
 }
 
 /**
@@ -50,14 +55,47 @@ export interface RevisionMeta {
  * consecutive revisions by the same person with gaps under `gapMs` form one edit
  * session, represented by its last revision.  Input and output are newest first.
  */
-export function groupRevisions(revs: RevisionMeta[], gapMs = 10 * 60 * 1000): { last: RevisionMeta; first: RevisionMeta; count: number }[] {
-  const out: { last: RevisionMeta; first: RevisionMeta; count: number }[] = []
+export function groupRevisions(revs: RevisionMeta[], gapMs = SESSION_GAP): RevisionGroup[] {
+  const out: RevisionGroup[] = []
   for (const r of revs) {
     const g = out[out.length - 1]
     if (g && g.first.byEmail === r.byEmail && g.first.createdAt - r.createdAt < gapMs && r.version > 1) {
       g.first = r
       g.count++
-    } else out.push({ last: r, first: r, count: 1 })
+      if (r.via && !g.via.includes(r.via)) g.via.push(r.via)
+    } else out.push({ last: r, first: r, count: 1, via: r.via ? [r.via] : [] })
+  }
+  return out
+}
+
+export const SESSION_GAP = 10 * 60 * 1000
+export interface RevisionGroup {
+  last: RevisionMeta
+  first: RevisionMeta
+  count: number
+  /** Distinct non-typing origins in the session ('ai', 'restore', 'rename'). */
+  via: string[]
+}
+
+/**
+ * Same grouping across a whole wiki: revisions (newest first) of many pages interleave,
+ * so a session is per page (consecutive edits of that page by one person).  Output is newest first by each session's last edit.
+ */
+export function groupChanges<R extends RevisionMeta & { pageId: string }>(revs: R[], gapMs = SESSION_GAP): (RevisionGroup & { last: R; first: R })[] {
+  const out: (RevisionGroup & { last: R; first: R })[] = []
+  const open = new Map<string, RevisionGroup & { last: R; first: R }>()
+  for (const r of revs) {
+    const g = open.get(r.pageId)
+    // Unlike the page history, creating a page and writing it right after is one change.
+    if (g && g.first.byEmail === r.byEmail && g.first.createdAt - r.createdAt < gapMs) {
+      g.first = r
+      g.count++
+      if (r.via && !g.via.includes(r.via)) g.via.push(r.via)
+    } else {
+      const n = { last: r, first: r, count: 1, via: r.via ? [r.via] : [] }
+      out.push(n)
+      open.set(r.pageId, n)
+    }
   }
   return out
 }
@@ -74,9 +112,7 @@ export type Segment = { same: string[] } | Hunk
 export function diffHunks(before: string, after: string): Segment[] {
   const out: Segment[] = []
   let id = 0
-  // An empty text has no lines (not one empty line), so writing into an empty page is a pure addition.
-  const lines = (t: string) => (t === '' ? [] : t.split('\n'))
-  for (const part of diffComm(lines(before), lines(after)) as { common?: string[]; buffer1?: string[]; buffer2?: string[] }[]) {
+  for (const part of diffComm(splitLines(before), splitLines(after)) as { common?: string[]; buffer1?: string[]; buffer2?: string[] }[]) {
     if (part.common) out.push({ same: part.common })
     else out.push({ id: id++, del: part.buffer1 ?? [], add: part.buffer2 ?? [] })
   }

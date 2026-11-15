@@ -8,6 +8,7 @@ import { WikiLayout } from './wiki/WikiLayout'
 import { PageRoute } from './wiki/PageView'
 import { WikiHome } from './wiki/WikiHome'
 import { WikiSettings } from './wiki/WikiSettings'
+import { RecentChanges } from './wiki/RecentChanges'
 
 interface Session {
   me: Me
@@ -50,6 +51,7 @@ function Authed() {
           <Route index element={<WikiHome />} />
           <Route path="p/*" element={<PageRoute />} />
           <Route path="settings" element={<WikiSettings />} />
+          <Route path="changes" element={<RecentChanges />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

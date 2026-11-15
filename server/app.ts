@@ -19,6 +19,7 @@ import { matchesAll, searchTerms, snippet } from '../shared/search.js'
 import { AI_NEEDS_WEB, isAiPreset, isAiVolume, type Reviser } from './ai.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
 import { extractWikiTargets, rewriteWikiLinks } from '../shared/markdown/wikilinks.js'
+import { diffHunks, groupChanges } from '../shared/diff.js'
 
 export type Role = 'owner' | 'editor' | 'viewer'
 const RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 }
@@ -439,6 +440,62 @@ export function createApp(db: DB, cfg: AppConfig) {
     return c.json({ page: p })
   })
 
+  /**
+   * Recent changes across the wiki: revisions grouped into edit sessions (per page and
+   * person), newest first, each with its line counts.  `before` (ms) pages further back.
+   */
+  app.get('/api/wikis/:wid/changes', (c) => {
+    const { wikiId } = need(c, 'viewer')
+    const before = Number(c.req.query('before') ?? Number.MAX_SAFE_INTEGER)
+    const LIMIT = 500
+    type Row = { pageId: string; name: string; version: number; createdAt: number; length: number; byName: string | null; byEmail: string | null; via: string | null }
+    let rows = db
+      .prepare(
+        `SELECT r.page_id AS pageId, p.name, r.version, r.created_at AS createdAt, length(r.content) AS length, u.name AS byName, u.email AS byEmail, r.via
+         FROM page_revisions r JOIN pages p ON p.id = r.page_id LEFT JOIN users u ON u.id = r.created_by
+         WHERE p.wiki_id = ? AND r.created_at < ? ORDER BY r.created_at DESC, r.rowid DESC LIMIT ?`,
+      )
+      .all(wikiId, before, LIMIT + 1) as Row[]
+    let next: number | null = null
+    if (rows.length > LIMIT) {
+      // Cut at a timestamp boundary so the next request (created_at < next) misses nothing.
+      const cut = rows[LIMIT - 1].createdAt
+      const kept = rows.filter((r) => r.createdAt > cut)
+      if (kept.length) {
+        rows = kept
+        next = cut + 1
+      } else {
+        rows = rows.slice(0, LIMIT)
+        next = cut
+      }
+    }
+    const groups = groupChanges(rows)
+    const content = db.prepare('SELECT content FROM page_revisions WHERE page_id = ? AND version = ?')
+    const text = (pid: string, v: number) => (content.get(pid, v) as { content: string } | undefined)?.content ?? ''
+    const changes = groups.map((g) => {
+      let added = 0
+      let removed = 0
+      for (const s of diffHunks(g.first.version > 1 ? text(g.first.pageId, g.first.version - 1) : '', text(g.last.pageId, g.last.version))) {
+        if ('id' in s) (added += s.add.length), (removed += s.del.length)
+      }
+      return {
+        pageId: g.last.pageId,
+        name: g.last.name,
+        from: g.first.version,
+        to: g.last.version,
+        count: g.count,
+        at: g.last.createdAt,
+        byName: g.last.byName,
+        byEmail: g.last.byEmail,
+        via: g.via,
+        created: g.first.version === 1,
+        added,
+        removed,
+      }
+    })
+    return c.json({ changes, next })
+  })
+
   /** Revision metadata, newest first (content is fetched per version). */
   app.get('/api/wikis/:wid/pages/:pid/revisions', (c) => {
     const { wikiId } = need(c, 'viewer')
@@ -447,7 +504,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     const before = Number(c.req.query('before') ?? Number.MAX_SAFE_INTEGER)
     const rows = db
       .prepare(
-        `SELECT r.version, r.created_at AS createdAt, length(r.content) AS length, u.name AS byName, u.email AS byEmail
+        `SELECT r.version, r.created_at AS createdAt, length(r.content) AS length, u.name AS byName, u.email AS byEmail, r.via
          FROM page_revisions r LEFT JOIN users u ON u.id = r.created_by
          WHERE r.page_id = ? AND r.version < ? ORDER BY r.version DESC LIMIT 501`,
       )
@@ -491,8 +548,10 @@ export function createApp(db: DB, cfg: AppConfig) {
   /** Optimistic concurrency: the client sends the version it edited from. */
   app.put('/api/wikis/:wid/pages/:pid', async (c) => {
     const { wikiId } = need(c, 'editor')
-    const b = await body<{ content?: string; baseVersion?: number }>(c)
+    const b = await body<{ content?: string; baseVersion?: number; via?: string }>(c)
     if (typeof b.content !== 'string' || typeof b.baseVersion !== 'number') return c.json({ error: 'invalid' }, 400)
+    // Shown in the history ("AI の提案を採用", "復元"); anything else is ordinary typing.
+    const via = b.via === 'ai' || b.via === 'restore' ? b.via : null
     if (b.content.length > MAX_CONTENT) return c.json({ error: 'too_large' }, 413)
     const pid = c.req.param('pid')
     const uid = c.get('user').id
@@ -509,7 +568,7 @@ export function createApp(db: DB, cfg: AppConfig) {
       const now = Date.now()
       const v = cur.version + 1
       db.prepare('UPDATE pages SET content = ?, version = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(content, v, now, uid, pid)
-      db.prepare('INSERT INTO page_revisions (page_id, version, content, created_at, created_by) VALUES (?, ?, ?, ?, ?)').run(pid, v, content, now, uid)
+      db.prepare('INSERT INTO page_revisions (page_id, version, content, created_at, created_by, via) VALUES (?, ?, ?, ?, ?, ?)').run(pid, v, content, now, uid, via)
       return { status: 200 as const, page: pageRow(wikiId, pid)! }
     })
     if (result.status === 404) return c.json({ error: 'not_found' }, 404)
@@ -611,7 +670,7 @@ export function createApp(db: DB, cfg: AppConfig) {
           if (next === p.content) continue
           rewritten++
           db.prepare('UPDATE pages SET content = ?, version = ?, updated_at = ?, updated_by = ? WHERE id = ?').run(next, p.version + 1, now, uid, p.id)
-          db.prepare('INSERT INTO page_revisions (page_id, version, content, created_at, created_by) VALUES (?, ?, ?, ?, ?)').run(p.id, p.version + 1, next, now, uid)
+          db.prepare("INSERT INTO page_revisions (page_id, version, content, created_at, created_by, via) VALUES (?, ?, ?, ?, ?, 'rename')").run(p.id, p.version + 1, next, now, uid)
         }
       }
     })

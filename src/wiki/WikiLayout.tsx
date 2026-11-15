@@ -278,6 +278,9 @@ function Sidebar({ wikis, outline, open }: { wikis: WikiSummary[]; outline: Outl
         </>
       )}
       <div className="sidebar-bottom">
+        <NavLink to={`/w/${wiki.slug}/changes`} className="side-link" data-testid="recent-changes">
+          最近の更新
+        </NavLink>
         <NavLink to={`/w/${wiki.slug}/settings`} className="side-link">
           共有設定・メンバー
         </NavLink>

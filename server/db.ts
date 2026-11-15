@@ -119,6 +119,10 @@ function migrate(db: DB) {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS wikis_slug ON wikis(slug)')
   // AI suggestions send page text to an external API, so each wiki opts in (owner).
   if (!cols.includes('ai_enabled')) db.exec('ALTER TABLE wikis ADD COLUMN ai_enabled INTEGER NOT NULL DEFAULT 0')
+  // How a revision was made: null (typing), 'ai' (an AI suggestion was accepted), 'restore', 'rename' (link rewrite).
+  const rcols = (db.prepare('PRAGMA table_info(page_revisions)').all() as { name: string }[]).map((c) => c.name)
+  if (!rcols.includes('via')) db.exec('ALTER TABLE page_revisions ADD COLUMN via TEXT')
+  db.exec('CREATE INDEX IF NOT EXISTS page_revisions_created ON page_revisions(created_at)')
   for (const w of db.prepare('SELECT id FROM wikis WHERE slug IS NULL').all() as { id: string }[]) {
     db.prepare('UPDATE wikis SET slug = ? WHERE id = ?').run(`w-${w.id.replace(/-/g, '').slice(0, 8)}`, w.id)
   }

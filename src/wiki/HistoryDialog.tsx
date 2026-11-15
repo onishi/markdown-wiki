@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { groupRevisions, lineDiff, type RevisionMeta } from '../../shared/diff'
 import { Modal } from './Modal'
+import { DiffLines } from './DiffLines'
+import { VIA_LABEL } from './RecentChanges'
 
 type Session = ReturnType<typeof groupRevisions>[number]
 
@@ -86,6 +88,15 @@ export function HistoryDialog({
                     {i === 0 && '（最新）'}
                     {g.last.version === 1 && '（作成）'}
                   </span>
+                  {g.via.length > 0 && (
+                    <span className="history-tags">
+                      {g.via.map((v) => (
+                        <span key={v} className={`tag tag-${v}`}>
+                          {VIA_LABEL[v] ?? v}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                 </button>
               </li>
             ))}
@@ -124,21 +135,8 @@ export function HistoryDialog({
             <div className="diff" data-testid="diff">
               {!diff ? (
                 <p className="muted">読み込み中…</p>
-              ) : diff.added + diff.removed === 0 ? (
-                <p className="muted">変更はありません。</p>
               ) : (
-                diff.lines.map((l, i) =>
-                  l.kind === 'skip' ? (
-                    <div key={i} className="diff-skip">
-                      ⋯ {l.count} 行
-                    </div>
-                  ) : (
-                    <div key={i} className={`diff-line diff-${l.kind}`}>
-                      <span className="diff-mark">{l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : ' '}</span>
-                      {l.text || ' '}
-                    </div>
-                  ),
-                )
+                <DiffLines diff={diff} />
               )}
             </div>
           </div>

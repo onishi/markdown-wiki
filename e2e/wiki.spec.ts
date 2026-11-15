@@ -555,6 +555,22 @@ test('AI suggestions: owner opts in, review the diff, adopt some changes, undo',
   await page.getByTestId('ai-apply').click()
   await expect(page.getByTestId('doc')).toContainText('AI 追記')
   await saved(page)
+
+  // recent changes: the adopted suggestion is marked, and the diff opens inline
+  await page.getByTestId('recent-changes').click()
+  const first = page.getByTestId('changes').locator('.changes-list > li').first()
+  await expect(first.locator('.change-page')).toHaveText('Empty')
+  await expect(first.locator('.tag-new')).toBeVisible()
+  await expect(first.locator('.tag-ai')).toHaveText('AI の提案')
+  await first.getByTestId('change-diff').click()
+  await expect(first.locator('.diff-add')).toContainText(['（AI 追記）'])
+  await expect(first.locator('.diff-del')).toHaveCount(0)
+  await first.locator('.change-page').click()
+  await expect(page.getByTestId('doc')).toContainText('AI 追記')
+  // and in the page history
+  await page.getByTestId('page-menu').click()
+  await page.getByTestId('history').click()
+  await expect(page.getByTestId('history-list').locator('.tag-ai').first()).toBeVisible()
   await page.context().close()
 })
 
