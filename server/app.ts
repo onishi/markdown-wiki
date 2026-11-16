@@ -247,7 +247,8 @@ export function createApp(db: DB, cfg: AppConfig) {
     const rows = db
       .prepare(
         `SELECT w.id, w.slug, w.name, m.role, (SELECT COUNT(*) FROM pages p WHERE p.wiki_id = w.id) AS pageCount,
-                (SELECT COUNT(*) FROM memberships mm WHERE mm.wiki_id = w.id) AS memberCount
+                (SELECT COUNT(*) FROM memberships mm WHERE mm.wiki_id = w.id) AS memberCount,
+                (SELECT MAX(updated_at) FROM pages p WHERE p.wiki_id = w.id) AS updatedAt
          FROM wikis w JOIN memberships m ON m.wiki_id = w.id WHERE m.user_id = ? ORDER BY w.created_at`,
       )
       .all(c.get('user').id)
@@ -380,11 +381,12 @@ export function createApp(db: DB, cfg: AppConfig) {
   app.get('/api/wikis/:wid/pages', (c) => {
     const { wikiId } = need(c, 'viewer')
     const q = (c.req.query('q') ?? '').trim()
+    const cols = 'p.id, p.name, p.updated_at AS updatedAt, u.name AS updatedByName, p.published_at AS publishedAt FROM pages p LEFT JOIN users u ON u.id = p.updated_by'
     const pages = q
       ? db
-          .prepare("SELECT id, name, updated_at AS updatedAt FROM pages WHERE wiki_id = ? AND name LIKE ? ESCAPE '\\' ORDER BY name")
+          .prepare(`SELECT ${cols} WHERE p.wiki_id = ? AND p.name LIKE ? ESCAPE '\\' ORDER BY p.name`)
           .all(wikiId, `%${q.replace(/[\\%_]/g, (m) => '\\' + m)}%`)
-      : db.prepare('SELECT id, name, updated_at AS updatedAt FROM pages WHERE wiki_id = ? ORDER BY name').all(wikiId)
+      : db.prepare(`SELECT ${cols} WHERE p.wiki_id = ? ORDER BY p.name`).all(wikiId)
     const aliases = db.prepare('SELECT name, page_id AS pageId FROM page_aliases WHERE wiki_id = ?').all(wikiId)
     return c.json({ pages, aliases })
   })

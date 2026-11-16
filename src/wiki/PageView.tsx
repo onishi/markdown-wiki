@@ -8,6 +8,7 @@ import { normalizePageName } from '../../shared/pageName'
 import { DocEditor, type DocEditorHandle } from '../editor/DocEditor'
 import { useSession } from '../App'
 import { useWiki } from './WikiLayout'
+import { fullTime, relTime } from '../time'
 import { readDraft, usePageSaver, type Conflict } from './usePageSaver'
 import { ConflictDialog } from './ConflictDialog'
 import { Modal } from './Modal'
@@ -272,6 +273,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
         </div>
       </div>
       <h1 className="page-title">{page.name.split('/').pop()}</h1>
+      <PageMeta who={saver.savedAt ? 'あなた' : page.updatedByName} at={saver.savedAt ?? page.updatedAt} />
       {notice && (
         <div className="notice" role="status">
           {notice} <button className="link-btn" onClick={() => setNotice(null)}>閉じる</button>
@@ -378,7 +380,10 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           url={decodeURI(location.origin + pageUrl(wiki.slug, page.name))}
           publishedAt={publishedAt}
           canChange={role === 'owner'}
-          onChange={setPublishedAt}
+          onChange={(at) => {
+            setPublishedAt(at)
+            void reloadPages()
+          }}
           onClose={() => setDialog(null)}
         />
       )}
@@ -447,6 +452,21 @@ function SaveIndicator({ saver, onConflict }: { saver: ReturnType<typeof usePage
         </>
       )}
     </span>
+  )
+}
+
+/** "Onishi さんが 3 分前に更新" under the title; the relative time keeps up. */
+function PageMeta({ who, at }: { who: string | null; at: number }) {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 60_000)
+    return () => clearInterval(t)
+  }, [])
+  return (
+    <div className="page-meta muted small" title={fullTime(at)} data-testid="page-meta">
+      {who ? (who === 'あなた' ? 'あなたが' : `${who} さんが`) : ''}
+      {relTime(at) === 'たった今' ? 'たった今更新' : `${relTime(at)}に更新`}
+    </div>
   )
 }
 

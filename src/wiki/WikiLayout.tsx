@@ -313,7 +313,8 @@ function TreeList({ nodes, forceOpen }: { nodes: TreeNode[]; forceOpen: boolean 
 }
 
 function TreeItem({ node, forceOpen }: { node: TreeNode; forceOpen: boolean }) {
-  const { wiki } = useWiki()
+  const { wiki, pages } = useWiki()
+  const isPublished = !!node.pageId && !!pages.find((p) => p.id === node.pageId)?.publishedAt
   const loc = useLocation()
   const url = pageUrl(wiki.slug, node.name)
   const current = decodeURIComponent(loc.pathname) === decodeURIComponent(url)
@@ -336,6 +337,7 @@ function TreeItem({ node, forceOpen }: { node: TreeNode; forceOpen: boolean }) {
         <Link to={url} className={node.pageId ? '' : 'virtual'} title={node.pageId ? node.name : `${node.name}（本文なし）`}>
           {node.label}
         </Link>
+        {isPublished && <span className="tree-pub" title="公開中" aria-label="公開中" />}
       </div>
       {expanded && node.children.length > 0 && <TreeList nodes={node.children} forceOpen={forceOpen} />}
     </li>

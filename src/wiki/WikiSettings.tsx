@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { api, ApiError, ROLE_LABEL, type Role } from '../api'
+import { Link, useNavigate } from 'react-router-dom'
+import { api, ApiError, pageUrl, ROLE_LABEL, type Role } from '../api'
+import { PageName } from './WikiHome'
 import { useSession } from '../App'
 import { useWiki } from './WikiLayout'
 import { Modal } from './Modal'
@@ -39,6 +40,7 @@ export function WikiSettings() {
   const [name, setName] = useState(wiki.name)
   const [slug, setSlug] = useState(wiki.slug)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const published = pages.filter((p) => p.publishedAt).sort((a, b) => a.name.localeCompare(b.name, 'ja'))
 
   const load = useCallback(async () => {
     const r = await api<{ members: Member[]; invitations: Invitation[] }>('GET', `/api/wikis/${wiki.id}/members`)
@@ -65,9 +67,17 @@ export function WikiSettings() {
     <div className="page settings">
       <h1 className="page-title">共有設定</h1>
       <p className="muted">
-        この wiki は<strong>非公開</strong>です。メンバーだけがアクセスできます。あなたの権限: {ROLE_LABEL[role]}
+        この wiki は<strong>非公開</strong>で、メンバーだけが読めます
+        {published.length > 0 && <>（公開した {published.length} ページを除く）</>}。あなたの権限: {ROLE_LABEL[role]}
       </p>
-      {msg && <div className="notice">{msg}</div>}
+      {msg && (
+        <div className="notice settings-msg" role="status">
+          {msg}
+          <button className="link-btn" onClick={() => setMsg(null)}>
+            閉じる
+          </button>
+        </div>
+      )}
 
       <section>
         <h3>メンバー</h3>
@@ -128,6 +138,26 @@ export function WikiSettings() {
         </table>
       </section>
 
+      <section data-testid="published-pages">
+        <h3>公開中のページ</h3>
+        {published.length === 0 ? (
+          <p className="muted small">公開中のページはありません。オーナーはページ右上の「…」→「公開する…」で、ページを 1 つずつ公開できます。</p>
+        ) : (
+          <>
+            <p className="muted small">次のページは、ログインしていない人も URL で読めます。公開をやめるには、ページの「公開中」を押します。</p>
+            <ul className="list list-compact">
+              {published.map((p) => (
+                <li key={p.id}>
+                  <Link to={pageUrl(wiki.slug, p.name)} className="list-row">
+                    <PageName page={{ name: p.name }} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+
       {isOwner && (
         <>
           <section>
@@ -150,6 +180,15 @@ export function WikiSettings() {
               </button>
             </form>
             <p className="muted small">オーナー: メンバーと権限の管理 / 編集者: ページの作成・編集・削除 / 閲覧者: 閲覧とコピー</p>
+          </section>
+          <section>
+            <h3>wiki の名前</h3>
+            <form className="inline-form" onSubmit={(e) => (e.preventDefault(), run(async () => (await api('PATCH', `/api/wikis/${wiki.id}`, { name }), await reloadWiki()), '名前を変更しました。'))}>
+              <input value={name} onChange={(e) => setName(e.target.value)} aria-label="wiki の名前" />
+              <button className="btn" type="submit">
+                変更
+              </button>
+            </form>
           </section>
           <section>
             <h3>トップページ</h3>
@@ -217,17 +256,9 @@ export function WikiSettings() {
               </button>
             </form>
           </section>
-          <section>
-            <h3>wiki の名前</h3>
-            <form className="inline-form" onSubmit={(e) => (e.preventDefault(), run(async () => (await api('PATCH', `/api/wikis/${wiki.id}`, { name }), await reloadWiki()), '名前を変更しました。'))}>
-              <input value={name} onChange={(e) => setName(e.target.value)} />
-              <button className="btn" type="submit">
-                変更
-              </button>
-            </form>
-          </section>
-          <section>
+          <section className="danger-zone">
             <h3>wiki の削除</h3>
+            <p className="muted small">すべてのページ・履歴・画像が削除され、元に戻せません。</p>
             <button className="btn btn-danger" onClick={() => setConfirmDelete(true)}>
               この wiki を削除
             </button>

@@ -10,6 +10,7 @@ import { WikiHome } from './wiki/WikiHome'
 import { WikiSettings } from './wiki/WikiSettings'
 import { RecentChanges } from './wiki/RecentChanges'
 import { PublicPage } from './wiki/PublicPage'
+import { fullTime, relTime } from './time'
 
 interface Session {
   me: Me
@@ -158,15 +159,16 @@ function Home() {
         ) : wikis.length === 0 ? (
           <p className="muted">まだ wiki がありません。最初の wiki を作成しましょう。</p>
         ) : (
-          <ul className="wiki-list">
+          <ul className="list wiki-cards">
             {wikis.map((w) => (
               <li key={w.id}>
-                <a href={wikiUrl(w.slug)} onClick={(e) => (e.preventDefault(), nav(wikiUrl(w.slug)))}>
-                  {w.name}
+                <a href={wikiUrl(w.slug)} className="list-row wiki-card" onClick={(e) => (e.preventDefault(), nav(wikiUrl(w.slug)))}>
+                  <span className="wiki-card-name">{w.name}</span>
+                  <span className="list-meta">
+                    {ROLE_LABEL[w.role]} · {w.pageCount} ページ · {w.memberCount} 人
+                    {w.updatedAt ? <span title={fullTime(w.updatedAt)}> · 最終更新 {relTime(w.updatedAt)}</span> : null}
+                  </span>
                 </a>
-                <span className="muted small">
-                  {ROLE_LABEL[w.role]} · {w.pageCount} ページ · {w.memberCount} 人
-                </span>
               </li>
             ))}
           </ul>

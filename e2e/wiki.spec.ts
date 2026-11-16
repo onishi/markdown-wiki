@@ -273,7 +273,7 @@ test('wiki slug: /w/<slug>/p/<page> URLs; changing it keeps old URLs working', a
   // Change the slug in settings; the old URL forwards to the new one.
   await page.goto(`/w/${slug}/settings`)
   await page.getByTestId('wiki-slug').fill(`${slug}-new`)
-  await page.getByRole('button', { name: '変更' }).first().click()
+  await page.getByTestId('wiki-slug').press('Enter')
   await expect(page.getByText('識別子を変更しました。')).toBeVisible()
   await expect(page).toHaveURL(new RegExp(`/w/${slug}-new/settings$`))
   await page.goto(`/w/${slug}/p/${encodeURIComponent('議事録')}`)
@@ -670,6 +670,12 @@ test('published page: the owner publishes it, anyone reads it at the same URL', 
   }
   await publish('地図')
   await publish('お知らせ')
+  await expect(page.getByTestId('page-meta')).toContainText('更新')
+  // listed in the settings, marked on the wiki home
+  await page.goto(`/w/${slug}/settings`)
+  await expect(page.getByTestId('published-pages').getByRole('link')).toHaveText(['お知らせ', '地図'])
+  await page.goto(`/w/${slug}?list`)
+  await expect(page.getByTestId('recent-pages').getByRole('link', { name: /お知らせ/ })).toContainText('公開')
 
   const anon = await (await browser.newContext()).newPage()
   await anon.goto(`/w/${slug}/p/${encodeURIComponent('お知らせ')}`)
