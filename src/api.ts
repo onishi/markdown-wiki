@@ -54,6 +54,8 @@ export interface Page extends PageSummary {
   content: string
   version: number
   updatedByName: string | null
+  /** Published (readable without logging in) since; null: members only. */
+  publishedAt?: number | null
 }
 
 export const encodePath = (name: string) => name.split('/').map(encodeURIComponent).join('/')

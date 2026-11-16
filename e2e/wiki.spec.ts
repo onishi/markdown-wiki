@@ -647,6 +647,65 @@ test('AI key terms: each suggested link, new pages included, is adopted one by o
   await page.context().close()
 })
 
+test('published page: the owner publishes it, anyone reads it at the same URL', async ({ browser }) => {
+  const page = await login(browser, uniq('pub'))
+  const slug = await createWiki(page, 'Public wiki')
+  await newPage(page, '社外秘')
+  await writeBody(page, 'ひみつ')
+  await saved(page)
+  await newPage(page, 'お知らせ')
+  await writeBody(page, '# 営業時間\n\n平日 9 時から。[[社外秘]] と [[地図]] も参照。')
+  await saved(page)
+  await newPage(page, '地図')
+  await writeBody(page, '駅から 5 分')
+  await saved(page)
+  const publish = async (name: string) => {
+    await page.goto(`/w/${slug}/p/${encodeURIComponent(name)}`)
+    await page.getByTestId('page-menu').click()
+    await page.getByTestId('publish-menu').click()
+    await page.getByTestId('publish').click()
+    await expect(page.getByTestId('publish-url')).toHaveValue(new RegExp(`/w/${slug}/p/${name}$`))
+    await page.getByRole('button', { name: '閉じる' }).click()
+    await expect(page.getByTestId('public-badge')).toBeVisible()
+  }
+  await publish('地図')
+  await publish('お知らせ')
+
+  const anon = await (await browser.newContext()).newPage()
+  await anon.goto(`/w/${slug}/p/${encodeURIComponent('お知らせ')}`)
+  await expect(anon.getByTestId('public-page')).toBeVisible()
+  await expect(anon.getByRole('heading', { name: '営業時間' })).toBeVisible()
+  await expect(anon.getByText('Public wiki')).toBeVisible()
+  const doc = anon.getByTestId('doc')
+  await expect(doc.getByRole('link', { name: '社外秘' })).toHaveCount(0) // not published: plain text
+  await expect(doc).toContainText('社外秘')
+  await doc.getByRole('link', { name: '地図' }).click()
+  await expect(anon.getByText('駅から 5 分')).toBeVisible()
+  await expect(anon).toHaveURL(new RegExp(`/w/${slug}/p/${encodeURIComponent('地図')}$`))
+  // not published: log in first
+  await anon.goto(`/w/${slug}/p/${encodeURIComponent('社外秘')}`)
+  await expect(anon).toHaveURL(/\/login\?returnTo=/)
+
+  // a logged-in non-member sees the public view too
+  const other = await login(browser, uniq('outsider'))
+  await other.goto(`/w/${slug}/p/${encodeURIComponent('お知らせ')}`)
+  await expect(other.getByTestId('public-page')).toBeVisible()
+  await other.goto(`/w/${slug}/p/${encodeURIComponent('社外秘')}`)
+  await expect(other.getByText('この wiki は存在しないか、アクセス権がありません。')).toBeVisible()
+
+  // unpublish
+  await page.goto(`/w/${slug}/p/${encodeURIComponent('お知らせ')}`)
+  await page.getByTestId('public-badge').click()
+  await page.getByTestId('unpublish').click()
+  await page.getByRole('button', { name: '閉じる' }).click()
+  await expect(page.getByTestId('public-badge')).toHaveCount(0)
+  await anon.goto(`/w/${slug}/p/${encodeURIComponent('お知らせ')}`)
+  await expect(anon).toHaveURL(/\/login\?returnTo=/)
+  await page.context().close()
+  await anon.context().close()
+  await other.context().close()
+})
+
 test('task list: clicking a checkbox toggles it and rewrites the source', async ({ browser }) => {
   const page = await login(browser, uniq('task'))
   const slug = await createWiki(page, 'Task wiki')
@@ -693,7 +752,7 @@ test('page header: … menu, ? shortcut list', async ({ browser }) => {
   await newPage(page, 'Doc')
   await expect(page.getByTestId('rename')).toHaveCount(0) // tucked into the … menu
   await page.getByTestId('page-menu').click()
-  await expect(page.getByRole('menuitem')).toHaveText(['子ページを作成', '名前を変更', '削除'])
+  await expect(page.getByRole('menuitem')).toHaveText(['子ページを作成', '名前を変更', '公開する…', '削除'])
   // sidebar: outline first and selected by default
   await expect(page.getByRole('tab')).toHaveText(['アウトライン', 'ページ'])
   await expect(page.getByTestId('tab-outline')).toHaveAttribute('aria-selected', 'true')

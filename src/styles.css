@@ -515,3 +515,16 @@ mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0 1px; 
 .ai-progress-text { margin: 8px 0 0; max-height: 30vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
 .ai-related { margin: -4px 0 0; }
 .ai-hint + .check-row { margin-top: 10px; }
+
+/* Published pages */
+button.tag { cursor: pointer; background: none; font: inherit; font-size: 11px; }
+.tag-public { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+.publish-notes { padding-left: 1.2em; margin: 0 0 12px; }
+.publish-notes li { margin: 2px 0; }
+.publish-url { display: flex; gap: 8px; margin: 8px 0; }
+.publish-url input { flex: 1; min-width: 0; font: inherit; font-size: 13px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--fg); }
+.public { min-height: 100vh; background: var(--bg); }
+.public-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.public-wiki { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.public-page { max-width: 820px; margin: 0 auto; padding: 24px 16px 64px; }
+.public-foot { margin-top: 48px; padding-top: 12px; border-top: 1px solid var(--border); }

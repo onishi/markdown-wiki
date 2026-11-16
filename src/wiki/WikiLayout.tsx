@@ -7,6 +7,7 @@ import { useSession } from '../App'
 import { Modal } from './Modal'
 import { QuickOpen } from './QuickOpen'
 import { Outline } from '../editor/Outline'
+import { PublicPage } from './PublicPage'
 import type { OutlineItem } from '../../shared/markdown/outline'
 
 /** Set by the page view so the sidebar can show its outline. */
@@ -41,6 +42,7 @@ export function WikiLayout() {
   const [pages, setPages] = useState<PageSummary[]>([])
   const [aliases, setAliases] = useState<{ name: string; pageId: string }[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [noAccess, setNoAccess] = useState(false)
   const [newPage, setNewPage] = useState<string | null>(null)
   const [outline, setOutline] = useState<OutlineSource | null>(null)
 
@@ -78,8 +80,11 @@ export function WikiLayout() {
     loadedFor.current = null
     setWiki(null)
     setError(null)
-    reloadWiki()
-      .catch((e) => setError(e instanceof ApiError && e.status === 404 ? 'この wiki は存在しないか、アクセス権がありません。' : '読み込みに失敗しました。'))
+    setNoAccess(false)
+    reloadWiki().catch((e) => {
+      setNoAccess(e instanceof ApiError && e.status === 404)
+      setError(e instanceof ApiError && e.status === 404 ? 'この wiki は存在しないか、アクセス権がありません。' : '読み込みに失敗しました。')
+    })
     reloadPages().catch(() => {})
   }, [wid, reloadPages, reloadWiki])
 
@@ -115,13 +120,17 @@ export function WikiLayout() {
   const resolveWiki = useCallback<WikiResolver>((t) => ({ href: pageUrl(slug, t), exists: known.has(t) }), [slug, known])
   const absoluteWiki = useCallback<WikiResolver>((t) => ({ href: location.origin + pageUrl(slug, t), exists: true }), [slug])
 
-  if (error)
-    return (
+  if (error) {
+    const msg = (
       <div className="center-msg">
         <p>{error}</p>
         <Link to="/">wiki 一覧へ</Link>
       </div>
     )
+    // Not a member: the page may still be published.
+    if (noAccess && loc.pathname.startsWith(`/w/${wid}/p/`)) return <PublicPage fallback={msg} />
+    return msg
+  }
   if (!wiki) return <div className="center-msg">読み込み中…</div>
 
   const role = wiki.role

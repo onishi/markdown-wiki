@@ -154,7 +154,11 @@ export function createApp(db: DB, cfg: AppConfig) {
 
   const requireUser = async (c: Context<Env>, next: Next) => {
     const u = sessionUser(db, c)
-    if (!u) return c.json({ error: 'unauthenticated' }, 401)
+    if (!u) {
+      // Published pages (and the images on them) can be read without logging in.
+      if (c.req.method === 'GET' && (c.req.path.startsWith('/api/public/') || /^\/api\/wikis\/[^/]+\/files\/[^/]+$/.test(c.req.path))) return next()
+      return c.json({ error: 'unauthenticated' }, 401)
+    }
     c.set('user', u)
     acceptInvitations(u)
     await next()
@@ -368,10 +372,10 @@ export function createApp(db: DB, cfg: AppConfig) {
   const pageRow = (wikiId: string, pageId: string) =>
     db
       .prepare(
-        `SELECT p.id, p.name, p.content, p.version, p.updated_at AS updatedAt, u.name AS updatedByName
+        `SELECT p.id, p.name, p.content, p.version, p.updated_at AS updatedAt, u.name AS updatedByName, p.published_at AS publishedAt
          FROM pages p LEFT JOIN users u ON u.id = p.updated_by WHERE p.wiki_id = ? AND p.id = ?`,
       )
-      .get(wikiId, pageId) as { id: string; name: string; content: string; version: number; updatedAt: number; updatedByName: string | null } | undefined
+      .get(wikiId, pageId) as { id: string; name: string; content: string; version: number; updatedAt: number; updatedByName: string | null; publishedAt: number | null } | undefined
 
   app.get('/api/wikis/:wid/pages', (c) => {
     const { wikiId } = need(c, 'viewer')
@@ -814,8 +818,14 @@ export function createApp(db: DB, cfg: AppConfig) {
   })
 
   app.get('/api/wikis/:wid/files/:fid', (c) => {
-    const { wikiId } = need(c, 'viewer')
-    const f = db.prepare('SELECT id, name, type, size FROM files WHERE wiki_id = ? AND id = ?').get(wikiId, c.req.param('fid')) as
+    const fid = c.req.param('fid')
+    const u = c.get('user') as User | undefined
+    const wikiId = resolveWikiId(c.req.param('wid')!) ?? ''
+    // Members see every file; others only the images on a published page.
+    const member = !!u && !!roleOf(u.id, wikiId)
+    if (!member && !db.prepare('SELECT 1 FROM pages WHERE wiki_id = ? AND published_at IS NOT NULL AND instr(content, ?) > 0').get(wikiId, `/files/${fid}`))
+      return c.json({ error: 'not_found' }, 404)
+    const f = db.prepare('SELECT id, name, type, size FROM files WHERE wiki_id = ? AND id = ?').get(wikiId, fid) as
       | { id: string; name: string; type: string; size: number }
       | undefined
     if (!f) return c.json({ error: 'not_found' }, 404)
@@ -830,13 +840,50 @@ export function createApp(db: DB, cfg: AppConfig) {
       headers: {
         'content-type': f.type,
         'content-length': String(f.size),
-        // Files never change (new upload = new id), but they are members-only.
-        'cache-control': 'private, max-age=31536000, immutable',
+        // Files never change (new upload = new id), but they are members-only (and an image
+        // of a published page stops being public when the page is unpublished).
+        'cache-control': member ? 'private, max-age=31536000, immutable' : 'private, no-cache',
         'x-content-type-options': 'nosniff',
         'content-security-policy': "default-src 'none'; sandbox",
         'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(f.name)}`,
       },
     })
+  })
+
+  /** Publish / unpublish a page (owner): published pages are readable without logging in. */
+  app.post('/api/wikis/:wid/pages/:pid/publish', async (c) => {
+    const { wikiId } = need(c, 'owner')
+    const b = await body<{ published?: boolean }>(c)
+    if (typeof b.published !== 'boolean') return c.json({ error: 'invalid' }, 400)
+    const pid = c.req.param('pid')
+    const r = db.prepare('UPDATE pages SET published_at = ? WHERE wiki_id = ? AND id = ?').run(b.published ? Date.now() : null, wikiId, pid)
+    if (!r.changes) return c.json({ error: 'not_found' }, 404)
+    return c.json({ page: pageRow(wikiId, pid) })
+  })
+
+  /**
+   * A published page for anyone (no login): its text, and which other pages of the wiki
+   * are published (links to the rest are shown as plain text).  Unpublished looks like
+   * missing (404).
+   */
+  app.get('/api/public/wikis/:wid/page', (c) => {
+    const wikiId = resolveWikiId(c.req.param('wid')!)
+    const name = validatePageName(c.req.query('name') ?? '')
+    if (!wikiId || !name) return c.json({ error: 'not_found' }, 404)
+    const p = (db.prepare('SELECT id, name, content, updated_at AS updatedAt, published_at AS publishedAt FROM pages WHERE wiki_id = ? AND name = ?').get(wikiId, name) ??
+      db.prepare('SELECT p.id, p.name, p.content, p.updated_at AS updatedAt, p.published_at AS publishedAt FROM page_aliases a JOIN pages p ON p.id = a.page_id WHERE a.wiki_id = ? AND a.name = ?').get(wikiId, name)) as
+      | { id: string; name: string; content: string; updatedAt: number; publishedAt: number | null }
+      | undefined
+    if (!p || p.publishedAt === null) return c.json({ error: 'not_found' }, 404)
+    const w = db.prepare('SELECT name, slug FROM wikis WHERE id = ?').get(wikiId) as { name: string; slug: string }
+    const pub = db.prepare('SELECT id, name FROM pages WHERE wiki_id = ? AND published_at IS NOT NULL').all(wikiId) as { id: string; name: string }[]
+    const ids = new Set(pub.map((r) => r.id))
+    const aliases = (db.prepare('SELECT name, page_id FROM page_aliases WHERE wiki_id = ?').all(wikiId) as { name: string; page_id: string }[]).filter((a) => ids.has(a.page_id))
+    return c.json(
+      { wiki: { name: w.name, slug: w.slug }, page: { name: p.name, content: p.content, updatedAt: p.updatedAt }, published: [...pub.map((r) => r.name), ...aliases.map((a) => a.name)] },
+      200,
+      { 'cache-control': 'no-store' },
+    )
   })
 
   app.delete('/api/wikis/:wid/pages/:pid', (c) => {

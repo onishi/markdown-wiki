@@ -9,6 +9,7 @@ import { PageRoute } from './wiki/PageView'
 import { WikiHome } from './wiki/WikiHome'
 import { WikiSettings } from './wiki/WikiSettings'
 import { RecentChanges } from './wiki/RecentChanges'
+import { PublicPage } from './wiki/PublicPage'
 
 interface Session {
   me: Me
@@ -42,7 +43,16 @@ function Authed() {
     location.href = '/login'
   }, [])
   if (me === null) return <div className="center-msg">読み込み中…</div>
-  if (me === 'anon') return <Navigate to={`/login?returnTo=${encodeURIComponent(loc.pathname + loc.search)}`} replace />
+  if (me === 'anon') {
+    const toLogin = <Navigate to={`/login?returnTo=${encodeURIComponent(loc.pathname + loc.search)}`} replace />
+    // Published pages are readable without logging in; anything else asks to log in.
+    return (
+      <Routes>
+        <Route path="/w/:wid/p/*" element={<PublicPage fallback={toLogin} />} />
+        <Route path="*" element={toLogin} />
+      </Routes>
+    )
+  }
   return (
     <SessionCtx.Provider value={{ me, setMe, logout }}>
       <Routes>
