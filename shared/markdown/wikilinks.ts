@@ -48,27 +48,53 @@ function maskNoLink(src: string): string {
   return src.replace(/```[\s\S]*?```|`[^`\n]*`|\[\[[^\]\n]*\]\]|!?\[[^\]\n]*\]\([^)\n]*\)|https?:\/\/\S+/g, (m) => '\u0000'.repeat(m.length))
 }
 
+/** A link to add: wrap `label` at offset `at` of the original text as a link to `target`. */
+export interface SuggestedLink {
+  target: string
+  label: string
+  at: number
+}
+
 /**
- * Put the links that `suggested` adds (relative to `src`) into `src` itself: each wraps
- * the first plain occurrence of its label.  Nothing else of `suggested` is taken, so
- * stray edits (spacing, rewording) cannot slip in with the links.
+ * The links that `suggested` adds relative to `src`, placed on `src` itself: each wraps
+ * the first plain occurrence of its label (not inside code, links, URLs or an earlier
+ * suggestion).  Nothing else of `suggested` is taken, so stray edits (spacing, rewording)
+ * cannot slip in with the links.  Sorted by position.
  */
-export function applySuggestedLinks(src: string, suggested: string): string {
+export function suggestedLinks(src: string, suggested: string): SuggestedLink[] {
   const had = new Set(extractWikiTargets(src))
-  const links: { target: string; label: string; raw: string }[] = []
+  const found: { target: string; label: string }[] = []
   walk(parseMarkdown(suggested), (n) => {
     if (n.type !== 'wikiLink') return
     const w = n as WikiLink
-    if (had.has(w.target) || links.some((l) => l.target === w.target)) return
-    const raw = suggested.slice(w.targetRange[0], w.targetRange[1])
-    links.push({ target: w.target, label: w.label, raw })
+    const target = suggested.slice(w.targetRange[0], w.targetRange[1])
+    if (had.has(w.target) || found.some((l) => l.target === target)) return
+    found.push({ target, label: w.label })
   })
+  const masked = maskNoLink(src).split('')
+  const out: SuggestedLink[] = []
+  for (const l of found) {
+    if (!l.label.trim()) continue
+    const at = masked.join('').indexOf(l.label)
+    if (at < 0) continue
+    for (let i = at; i < at + l.label.length; i++) masked[i] = '\u0000'
+    out.push({ ...l, at })
+  }
+  return out.sort((a, b) => a.at - b.at)
+}
+
+/** Wrap each of `links` (from `suggestedLinks(src, …)`) in `src`. */
+export function applyLinks(src: string, links: readonly SuggestedLink[]): string {
   let out = src
-  for (const l of links) {
-    const at = maskNoLink(out).indexOf(l.label)
-    if (at < 0 || !l.label.trim()) continue
-    const link = l.label === l.raw ? `[[${l.raw}]]` : `[[${l.raw}|${l.label}]]`
-    out = out.slice(0, at) + link + out.slice(at + l.label.length)
+  for (const l of [...links].sort((a, b) => b.at - a.at)) {
+    if (src.slice(l.at, l.at + l.label.length) !== l.label) continue
+    const link = l.label === l.target ? `[[${l.target}]]` : `[[${l.target}|${l.label}]]`
+    out = out.slice(0, l.at) + link + out.slice(l.at + l.label.length)
   }
   return out
+}
+
+/** Put all the links that `suggested` adds into `src` (see `suggestedLinks`). */
+export function applySuggestedLinks(src: string, suggested: string): string {
+  return applyLinks(src, suggestedLinks(src, suggested))
 }

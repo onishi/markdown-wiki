@@ -9,6 +9,8 @@ import { PageRoute } from './wiki/PageView'
 import { WikiHome } from './wiki/WikiHome'
 import { WikiSettings } from './wiki/WikiSettings'
 import { RecentChanges } from './wiki/RecentChanges'
+import { PublicPage } from './wiki/PublicPage'
+import { fullTime, relTime } from './time'
 
 interface Session {
   me: Me
@@ -42,7 +44,16 @@ function Authed() {
     location.href = '/login'
   }, [])
   if (me === null) return <div className="center-msg">読み込み中…</div>
-  if (me === 'anon') return <Navigate to={`/login?returnTo=${encodeURIComponent(loc.pathname + loc.search)}`} replace />
+  if (me === 'anon') {
+    const toLogin = <Navigate to={`/login?returnTo=${encodeURIComponent(loc.pathname + loc.search)}`} replace />
+    // Published pages are readable without logging in; anything else asks to log in.
+    return (
+      <Routes>
+        <Route path="/w/:wid/p/*" element={<PublicPage fallback={toLogin} />} />
+        <Route path="*" element={toLogin} />
+      </Routes>
+    )
+  }
   return (
     <SessionCtx.Provider value={{ me, setMe, logout }}>
       <Routes>
@@ -148,15 +159,16 @@ function Home() {
         ) : wikis.length === 0 ? (
           <p className="muted">まだ wiki がありません。最初の wiki を作成しましょう。</p>
         ) : (
-          <ul className="wiki-list">
+          <ul className="list wiki-cards">
             {wikis.map((w) => (
               <li key={w.id}>
-                <a href={wikiUrl(w.slug)} onClick={(e) => (e.preventDefault(), nav(wikiUrl(w.slug)))}>
-                  {w.name}
+                <a href={wikiUrl(w.slug)} className="list-row wiki-card" onClick={(e) => (e.preventDefault(), nav(wikiUrl(w.slug)))}>
+                  <span className="wiki-card-name">{w.name}</span>
+                  <span className="list-meta">
+                    {ROLE_LABEL[w.role]} · {w.pageCount} ページ · {w.memberCount} 人
+                    {w.updatedAt ? <span title={fullTime(w.updatedAt)}> · 最終更新 {relTime(w.updatedAt)}</span> : null}
+                  </span>
                 </a>
-                <span className="muted small">
-                  {ROLE_LABEL[w.role]} · {w.pageCount} ページ · {w.memberCount} 人
-                </span>
               </li>
             ))}
           </ul>

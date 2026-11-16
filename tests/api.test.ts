@@ -395,7 +395,7 @@ describe('image files', () => {
     expect(got.headers.get('x-content-type-options')).toBe('nosniff')
     expect(new Uint8Array(await got.arrayBuffer())).toEqual(big)
     expect((await app.request(f.url, { headers: { cookie: co } })).status).toBe(404)
-    expect((await app.request(f.url)).status).toBe(401)
+    expect((await app.request(f.url)).status).toBe(404) // not on a published page
 
     // viewers can't upload; non-images (incl. SVG) are refused; size is capped
     expect((await upload(app, cv, w.id, big)).status).toBe(403)
@@ -403,5 +403,58 @@ describe('image files', () => {
     const huge = new Uint8Array(10 * 1024 * 1024 + 1)
     huge.set(PNG)
     expect((await upload(app, ca, w.id, huge)).status).toBe(413)
+  })
+
+  it('published pages: the owner publishes, anyone reads the page and its images, nothing else', async () => {
+    const { app } = setup()
+    const a = await login(app, 'a@example.com')
+    const w = (await a.post('/api/wikis', { name: 'W' })).json.wiki
+    await a.post(`/api/wikis/${w.id}/invitations`, { email: 'e@example.com', role: 'editor' })
+    const e = await login(app, 'e@example.com')
+    const out = await login(app, 'out@example.com')
+    const ca = await cookieOf(app, 'a@example.com')
+    const img = new Uint8Array(64)
+    img.set(PNG)
+    const f = ((await (await upload(app, ca, w.id, img)).json()) as any).file
+    const other = ((await (await upload(app, ca, w.id, img)).json()) as any).file
+    const pub = (await a.post(`/api/wikis/${w.id}/pages`, { name: '案内', content: `![](${f.url})\n\n[[秘密]] と [[手順]]` })).json.page
+    await a.post(`/api/wikis/${w.id}/pages`, { name: '秘密', content: `![](${other.url})` })
+    const step = (await a.post(`/api/wikis/${w.id}/pages`, { name: '手順', content: 'x' })).json.page
+    const anon = (path: string) => app.request(path)
+    const pageUrl = (name: string) => `/api/public/wikis/${w.slug}/page?name=${encodeURIComponent(name)}`
+
+    // not published yet: looks missing to everyone outside
+    expect((await anon(pageUrl('案内'))).status).toBe(404)
+    expect((await anon(f.url)).status).toBe(404)
+    // only owners publish
+    expect((await e.post(`/api/wikis/${w.id}/pages/${pub.id}/publish`, { published: true })).status).toBe(403)
+    const r = await a.post(`/api/wikis/${w.id}/pages/${pub.id}/publish`, { published: true })
+    expect(r.json.page.publishedAt).toEqual(expect.any(Number))
+    expect((await a.get(`/api/wikis/${w.id}/pages/${pub.id}`)).json.page.publishedAt).toBe(r.json.page.publishedAt)
+    await a.post(`/api/wikis/${w.id}/pages/${step.id}/publish`, { published: true })
+
+    const got = await anon(pageUrl('案内'))
+    expect(got.status).toBe(200)
+    const body = (await got.json()) as any
+    expect(body).toMatchObject({ wiki: { name: 'W', slug: w.slug }, page: { name: '案内' } })
+    expect(body.published.sort()).toEqual(['手順', '案内'])
+    expect(body.page.id).toBeUndefined()
+    // logged-in outsiders too; unpublished pages and other wiki APIs stay closed
+    expect((await out.get(pageUrl('案内'))).status).toBe(200)
+    expect((await anon(pageUrl('秘密'))).status).toBe(404)
+    expect((await anon(`/api/wikis/${w.id}/pages/${pub.id}`)).status).toBe(401)
+    expect((await out.get(`/api/wikis/${w.id}/pages/${pub.id}`)).status).toBe(404)
+    expect((await out.get(`/api/wikis/${w.id}/pages/${pub.id}/revisions`)).status).toBe(404)
+    // images on a published page only
+    expect((await anon(f.url)).status).toBe(200)
+    expect((await anon(other.url)).status).toBe(404)
+    // an old name still finds it
+    await a.post(`/api/wikis/${w.id}/pages/${pub.id}/rename`, { name: 'ご案内' })
+    expect(((await (await anon(pageUrl('案内'))).json()) as any).page.name).toBe('ご案内')
+    // unpublish: closed again
+    await a.post(`/api/wikis/${w.id}/pages/${pub.id}/publish`, { published: false })
+    expect((await anon(pageUrl('ご案内'))).status).toBe(404)
+    expect((await anon(f.url)).status).toBe(404)
+    expect((await a.post(`/api/wikis/${w.id}/pages/${pub.id}/publish`, {})).status).toBe(400)
   })
 })

@@ -7,6 +7,7 @@ import { useSession } from '../App'
 import { Modal } from './Modal'
 import { QuickOpen } from './QuickOpen'
 import { Outline } from '../editor/Outline'
+import { PublicPage } from './PublicPage'
 import type { OutlineItem } from '../../shared/markdown/outline'
 
 /** Set by the page view so the sidebar can show its outline. */
@@ -41,6 +42,7 @@ export function WikiLayout() {
   const [pages, setPages] = useState<PageSummary[]>([])
   const [aliases, setAliases] = useState<{ name: string; pageId: string }[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [noAccess, setNoAccess] = useState(false)
   const [newPage, setNewPage] = useState<string | null>(null)
   const [outline, setOutline] = useState<OutlineSource | null>(null)
 
@@ -78,8 +80,11 @@ export function WikiLayout() {
     loadedFor.current = null
     setWiki(null)
     setError(null)
-    reloadWiki()
-      .catch((e) => setError(e instanceof ApiError && e.status === 404 ? 'この wiki は存在しないか、アクセス権がありません。' : '読み込みに失敗しました。'))
+    setNoAccess(false)
+    reloadWiki().catch((e) => {
+      setNoAccess(e instanceof ApiError && e.status === 404)
+      setError(e instanceof ApiError && e.status === 404 ? 'この wiki は存在しないか、アクセス権がありません。' : '読み込みに失敗しました。')
+    })
     reloadPages().catch(() => {})
   }, [wid, reloadPages, reloadWiki])
 
@@ -115,13 +120,17 @@ export function WikiLayout() {
   const resolveWiki = useCallback<WikiResolver>((t) => ({ href: pageUrl(slug, t), exists: known.has(t) }), [slug, known])
   const absoluteWiki = useCallback<WikiResolver>((t) => ({ href: location.origin + pageUrl(slug, t), exists: true }), [slug])
 
-  if (error)
-    return (
+  if (error) {
+    const msg = (
       <div className="center-msg">
         <p>{error}</p>
         <Link to="/">wiki 一覧へ</Link>
       </div>
     )
+    // Not a member: the page may still be published.
+    if (noAccess && loc.pathname.startsWith(`/w/${wid}/p/`)) return <PublicPage fallback={msg} />
+    return msg
+  }
   if (!wiki) return <div className="center-msg">読み込み中…</div>
 
   const role = wiki.role
@@ -304,7 +313,8 @@ function TreeList({ nodes, forceOpen }: { nodes: TreeNode[]; forceOpen: boolean 
 }
 
 function TreeItem({ node, forceOpen }: { node: TreeNode; forceOpen: boolean }) {
-  const { wiki } = useWiki()
+  const { wiki, pages } = useWiki()
+  const isPublished = !!node.pageId && !!pages.find((p) => p.id === node.pageId)?.publishedAt
   const loc = useLocation()
   const url = pageUrl(wiki.slug, node.name)
   const current = decodeURIComponent(loc.pathname) === decodeURIComponent(url)
@@ -327,6 +337,7 @@ function TreeItem({ node, forceOpen }: { node: TreeNode; forceOpen: boolean }) {
         <Link to={url} className={node.pageId ? '' : 'virtual'} title={node.pageId ? node.name : `${node.name}（本文なし）`}>
           {node.label}
         </Link>
+        {isPublished && <span className="tree-pub" title="公開中" aria-label="公開中" />}
       </div>
       {expanded && node.children.length > 0 && <TreeList nodes={node.children} forceOpen={forceOpen} />}
     </li>

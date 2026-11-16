@@ -123,6 +123,9 @@ function migrate(db: DB) {
   const rcols = (db.prepare('PRAGMA table_info(page_revisions)').all() as { name: string }[]).map((c) => c.name)
   if (!rcols.includes('via')) db.exec('ALTER TABLE page_revisions ADD COLUMN via TEXT')
   db.exec('CREATE INDEX IF NOT EXISTS page_revisions_created ON page_revisions(created_at)')
+  // Published pages (owner's choice, per page) can be read without logging in at their usual URL.
+  const pcols = (db.prepare('PRAGMA table_info(pages)').all() as { name: string }[]).map((c) => c.name)
+  if (!pcols.includes('published_at')) db.exec('ALTER TABLE pages ADD COLUMN published_at INTEGER')
   for (const w of db.prepare('SELECT id FROM wikis WHERE slug IS NULL').all() as { id: string }[]) {
     db.prepare('UPDATE wikis SET slug = ? WHERE id = ?').run(`w-${w.id.replace(/-/g, '').slice(0, 8)}`, w.id)
   }

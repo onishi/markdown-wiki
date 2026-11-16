@@ -36,6 +36,8 @@ export interface WikiSummary {
   slug: string
   name: string
   role: Role
+  /** Latest page update (wiki list; null: no pages). */
+  updatedAt?: number | null
   /** Page shown at /w/:wid (null: the page list). */
   topPageId?: string | null
   topPage?: string | null
@@ -49,11 +51,16 @@ export interface PageSummary {
   id: string
   name: string
   updatedAt: number
+  /** In the page list only. */
+  updatedByName?: string | null
+  publishedAt?: number | null
 }
 export interface Page extends PageSummary {
   content: string
   version: number
   updatedByName: string | null
+  /** Published (readable without logging in) since; null: members only. */
+  publishedAt?: number | null
 }
 
 export const encodePath = (name: string) => name.split('/').map(encodeURIComponent).join('/')

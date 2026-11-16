@@ -8,6 +8,7 @@ import { normalizePageName } from '../../shared/pageName'
 import { DocEditor, type DocEditorHandle } from '../editor/DocEditor'
 import { useSession } from '../App'
 import { useWiki } from './WikiLayout'
+import { fullTime, relTime } from '../time'
 import { readDraft, usePageSaver, type Conflict } from './usePageSaver'
 import { ConflictDialog } from './ConflictDialog'
 import { Modal } from './Modal'
@@ -155,7 +156,7 @@ function MissingPage({ name, children, onCreated }: { name: string; children: { 
 }
 
 function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reload: () => void }) {
-  const { wiki, canEdit, resolveWiki, absoluteWiki, pages, reloadPages, openNewPage, setOutline } = useWiki()
+  const { wiki, role, canEdit, resolveWiki, absoluteWiki, pages, reloadPages, openNewPage, setOutline } = useWiki()
   const editorHandle = useRef<DocEditorHandle | null>(null)
   const { me } = useSession()
   const nav = useNavigate()
@@ -166,7 +167,8 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
   const [notice, setNotice] = useState<string | null>(
     loaded.renamedFrom ? `「${loaded.renamedFrom}」は「${page.name}」に名前が変わりました。` : loaded.restored && !loaded.conflict ? '保存されていなかった変更をこのブラウザから復元しました。' : null,
   )
-  const [dialog, setDialog] = useState<'rename' | 'delete' | 'history' | null>(null)
+  const [dialog, setDialog] = useState<'rename' | 'delete' | 'history' | 'publish' | null>(null)
+  const [publishedAt, setPublishedAt] = useState(page.publishedAt ?? null)
   // The sticky header gets a bottom border once the page has scrolled under it.
   const [stuck, setStuck] = useState(false)
   useEffect(() => {
@@ -237,6 +239,11 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
       <div className={'page-head' + (stuck ? ' stuck' : '')}>
         <Breadcrumb name={page.name} />
         <div className="page-actions">
+          {publishedAt !== null && (
+            <button className="tag tag-public" onClick={() => setDialog('publish')} title="ログインしていない人も読めます" data-testid="public-badge">
+              公開中
+            </button>
+          )}
           <SaveIndicator saver={saver} onConflict={() => setShowConflict(true)} />
           {canEdit && wiki.aiEnabled && wiki.aiAvailable && (
             <button
@@ -254,10 +261,19 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           <button className="btn btn-small" onClick={() => setDialog('history')} data-testid="history">
             履歴
           </button>
-          {canEdit && <PageMenu onChild={() => openNewPage(page.name + '/')} onRename={() => setDialog('rename')} onDelete={() => setDialog('delete')} />}
+          {canEdit && (
+            <PageMenu
+              onChild={() => openNewPage(page.name + '/')}
+              onRename={() => setDialog('rename')}
+              onDelete={() => setDialog('delete')}
+              onPublish={role === 'owner' ? () => setDialog('publish') : undefined}
+              published={publishedAt !== null}
+            />
+          )}
         </div>
       </div>
       <h1 className="page-title">{page.name.split('/').pop()}</h1>
+      <PageMeta who={saver.savedAt ? 'あなた' : page.updatedByName} at={saver.savedAt ?? page.updatedAt} />
       {notice && (
         <div className="notice" role="status">
           {notice} <button className="link-btn" onClick={() => setNotice(null)}>閉じる</button>
@@ -357,6 +373,20 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           onClose={() => setShowConflict(false)}
         />
       )}
+      {dialog === 'publish' && (
+        <PublishDialog
+          wikiId={wiki.id}
+          pageId={page.id}
+          url={decodeURI(location.origin + pageUrl(wiki.slug, page.name))}
+          publishedAt={publishedAt}
+          canChange={role === 'owner'}
+          onChange={(at) => {
+            setPublishedAt(at)
+            void reloadPages()
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
       {dialog === 'rename' && (
         <RenameDialog
           page={page}
@@ -425,6 +455,21 @@ function SaveIndicator({ saver, onConflict }: { saver: ReturnType<typeof usePage
   )
 }
 
+/** "Onishi さんが 3 分前に更新" under the title; the relative time keeps up. */
+function PageMeta({ who, at }: { who: string | null; at: number }) {
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 60_000)
+    return () => clearInterval(t)
+  }, [])
+  return (
+    <div className="page-meta muted small" title={fullTime(at)} data-testid="page-meta">
+      {who ? (who === 'あなた' ? 'あなたが' : `${who} さんが`) : ''}
+      {relTime(at) === 'たった今' ? 'たった今更新' : `${relTime(at)}に更新`}
+    </div>
+  )
+}
+
 function ModeBar({ editing, canEdit, roNotice, onHelp }: { editing: boolean; canEdit: boolean; roNotice: boolean; onHelp: () => void }) {
   const mod = /Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'
   const help = (
@@ -451,7 +496,106 @@ function ModeBar({ editing, canEdit, roNotice, onHelp }: { editing: boolean; can
   )
 }
 
-function PageMenu({ onChild, onRename, onDelete }: { onChild: () => void; onRename: () => void; onDelete: () => void }) {
+/** Publish / unpublish (owner) and the public URL. */
+function PublishDialog({
+  wikiId,
+  pageId,
+  url,
+  publishedAt,
+  canChange,
+  onChange,
+  onClose,
+}: {
+  wikiId: string
+  pageId: string
+  url: string
+  publishedAt: number | null
+  canChange: boolean
+  onChange: (at: number | null) => void
+  onClose: () => void
+}) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const set = async (published: boolean) => {
+    setBusy(true)
+    setErr(null)
+    try {
+      const r = await api<{ page: Page }>('POST', `/api/wikis/${wikiId}/pages/${pageId}/publish`, { published })
+      onChange(r.page.publishedAt ?? null)
+    } catch {
+      setErr('変更できませんでした。もう一度お試しください。')
+    } finally {
+      setBusy(false)
+    }
+  }
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+    } catch {}
+  }
+  return (
+    <Modal title="ページの公開" onClose={onClose}>
+      <div data-testid="publish-dialog">
+        {publishedAt === null ? (
+          <>
+            <p>このページを公開すると、ログインしていない人も含めて、URL を知っている人なら誰でも読めるようになります。</p>
+            <ul className="muted small publish-notes">
+              <li>公開されるのはこのページの本文と画像だけです。履歴、下位のページ、ほかのページは公開されません。</li>
+              <li>公開されていないページへのリンクは、ただの文字として表示されます。</li>
+              <li>URL はいまと同じです。検索エンジンに載ることがあります。</li>
+            </ul>
+          </>
+        ) : (
+          <>
+            <p>
+              このページは公開中です（{new Date(publishedAt).toLocaleDateString('ja-JP')} から）。次の URL で誰でも読めます。
+            </p>
+            <div className="publish-url">
+              <input readOnly value={url} onFocus={(e) => e.currentTarget.select()} aria-label="公開 URL" data-testid="publish-url" />
+              <button className="btn btn-small" onClick={copy}>
+                {copied ? 'コピーしました' : 'コピー'}
+              </button>
+            </div>
+            <p className="muted small">公開をやめると、この URL はメンバーしか読めなくなります。</p>
+          </>
+        )}
+        {!canChange && <p className="muted small">公開・非公開を変えられるのは wiki のオーナーだけです。</p>}
+        {err && <div className="notice">{err}</div>}
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>
+            閉じる
+          </button>
+          {canChange &&
+            (publishedAt === null ? (
+              <button className="btn btn-primary" disabled={busy} onClick={() => set(true)} data-testid="publish">
+                公開する
+              </button>
+            ) : (
+              <button className="btn btn-danger" disabled={busy} onClick={() => set(false)} data-testid="unpublish">
+                公開をやめる
+              </button>
+            ))}
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+function PageMenu({
+  onChild,
+  onRename,
+  onDelete,
+  onPublish,
+  published,
+}: {
+  onChild: () => void
+  onRename: () => void
+  onDelete: () => void
+  onPublish?: () => void
+  published: boolean
+}) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -488,6 +632,7 @@ function PageMenu({ onChild, onRename, onDelete }: { onChild: () => void; onRena
         <div className="menu-pop" role="menu">
           {item('子ページを作成', onChild)}
           {item('名前を変更', onRename, { testid: 'rename' })}
+          {onPublish && item(published ? '公開の設定…' : '公開する…', onPublish, { testid: 'publish-menu' })}
           {item('削除', onDelete, { danger: true, testid: 'delete' })}
         </div>
       )}

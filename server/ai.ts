@@ -22,13 +22,15 @@ export const AI_PRESETS = {
   summary: '冒頭に 2〜4 行の要約（箇条書き）を追加する。本文は変えない。',
   links:
     'リンクを張る: 【リンクにできるページ】にあるページを指している語句を wiki リンクにする。語句がページ名と同じなら [[ページ名]]、違うなら [[ページ名|語句]] と書く。各ページにつき最初の 1 か所だけ。たまたま同じ文字列でも別の意味で使われている箇所、見出し、コード、URL、既存のリンクの中はリンクにしない。語句を [[ ]] で囲むだけにし、前後に空白を足さない。リンク以外は一字一句変えない。summary にはリンクにした語句を挙げる。',
+  keywords:
+    '特徴語をリンクにする: 本文の特徴語（この wiki で独立したページとして説明する価値のある固有名詞・専門用語・概念）を選び、各語の最初の 1 か所を wiki リンクにする。このタスクでは、まだ存在しないページへのリンクも作ってよい。【リンクにできるページ】のページ名（または本文中の表記）が本文に出てくれば、それも特徴語としてリンクにし、[[ページ名|語句]]（同じなら [[ページ名]]）と書く。それ以外の語は本文の表記のまま [[語句]] と書き、別のページ名に向けない（その語が説明されているページであっても）。「方法」「機能」「データ」のような一般的すぎる語、文の一部を切り取った長い語句、このページの主題そのもの、見出し、コード、URL、既存のリンクの中は対象外。多くても 15 語程度、重要なものから。語句を [[ ]] で囲むだけにし、前後に空白を足さない。リンク以外は一字一句変えない。summary には選んだ語を挙げる。',
 } as const
 export type AiPreset = keyof typeof AI_PRESETS
 export const isAiPreset = (p: unknown): p is AiPreset => typeof p === 'string' && p in AI_PRESETS
 /** Tasks that only make sense with Google Search (web mode is forced on). */
 export const AI_NEEDS_WEB: ReadonlySet<AiPreset> = new Set(['factcheck'])
 /** Tasks about the wiki itself: no web search. */
-export const AI_NO_WEB: ReadonlySet<AiPreset> = new Set(['links'])
+export const AI_NO_WEB: ReadonlySet<AiPreset> = new Set(['links', 'keywords'])
 
 /** How long the result should be compared with the target ("auto": whatever the task needs). */
 export const AI_VOLUMES = {
@@ -56,7 +58,7 @@ export interface ReviseRequest {
   web?: boolean
   /** Other pages of the wiki given as background (links, backlinks, parent). */
   related?: RelatedPage[]
-  /** "links" task: existing pages whose name (or last part) appears in the target. */
+  /** "links" / "keywords" tasks: existing pages whose name (or last part) appears in the target. */
   linkCandidates?: LinkCandidate[]
 }
 export interface LinkCandidate {
@@ -247,7 +249,7 @@ export function geminiReviser(apiKey: string): Reviser {
 export const fakeReviser: Reviser = async (r, onText) => {
   const target = r.page.slice(r.start, r.end)
   let revised = target.replace(/teh/g, 'the') + '\n\n（AI 追記）'
-  if (r.preset === 'links') {
+  if (r.preset === 'links' || r.preset === 'keywords') {
     // Link the first mention of each candidate, plus one made-up link (the server must drop it).
     revised = target
     for (const c of r.linkCandidates ?? []) {
@@ -255,6 +257,8 @@ export const fakeReviser: Reviser = async (r, onText) => {
       revised = revised.replace(w, w === c.name ? `[[${c.name}]]` : `[[${c.name}|${w}]]`)
     }
     revised += '\n\n[[存在しないページ]]'
+    // Key terms: also a page that does not exist yet.
+    if (r.preset === 'keywords') revised = revised.replace('特徴語', '[[特徴語]]')
   }
   const summary = `テスト用の提案（${r.preset}${r.volume && r.volume !== 'auto' ? ', ' + r.volume : ''}${r.web ? ', web' : ''}）`
   if (onText) {
