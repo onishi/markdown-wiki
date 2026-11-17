@@ -50,6 +50,8 @@ export interface DocEditorHandle {
    * it); otherwise editing ends first and ⌘Z / u in display mode restores the text.
    */
   replaceAll: (next: string) => void
+  /** Edit the whole document at once (caret at its start). */
+  editAll: () => void
   /** Give the keyboard back to the editor (the source editor while editing). */
   focus: () => void
 }
@@ -247,7 +249,7 @@ export function DocEditor(props: DocEditorProps) {
 
   /** Enter edit mode at a source offset; `open` opens a new line below/above (vim o / O). */
   const startEdit = useCallback(
-    (offset: number, open?: 'below' | 'above', rangeEnd?: number, caretAtEnd?: boolean) => {
+    (offset: number, open?: 'below' | 'above', rangeEnd?: number, caretAt?: number) => {
       if (readOnly) {
         propsRef.current.onReadOnlyAttempt?.()
         return
@@ -269,8 +271,8 @@ export function DocEditor(props: DocEditorProps) {
       let caretIn = Math.min(Math.max(at - u.start, 0), text.length)
       // Keep the selected range selected in the source editor.
       let selEndIn = rangeEnd !== undefined ? Math.min(Math.max(rangeEnd - u.start, 0), text.length) : undefined
-      // Touch: a selected range would be replaced by the first key typed; start at its end instead.
-      if (caretAtEnd && selEndIn !== undefined) [caretIn, selEndIn] = [selEndIn, undefined]
+      // A caret instead of the range selected (touch: the first key typed would replace it all).
+      if (caretAt !== undefined) [caretIn, selEndIn] = [Math.min(Math.max(caretAt - u.start, 0), text.length), undefined]
       if (open && u.kind !== 'empty') {
         const o = openLine(text, caretIn, open, kind)
         text = o.text
@@ -338,6 +340,7 @@ export function DocEditor(props: DocEditorProps) {
 
   if (props.handleRef) {
     props.handleRef.current = {
+      editAll: () => editSection(0, source.length, 0),
       jumpTo: (offset: number) => {
         if (editRef.current) {
           exitEdit(offset)
@@ -401,6 +404,36 @@ export function DocEditor(props: DocEditorProps) {
       },
     }
   }
+
+  // ------------------------------------------------------------ section editing
+
+  /** Edit [start, end) as one range, caret at `caret` (ends the current edit first). */
+  const editSection = (start: number, end: number, caret: number) => {
+    if (readOnly) return propsRef.current.onReadOnlyAttempt?.()
+    if (editRef.current) {
+      exitEdit()
+      setTimeout(() => propsRef.current.handleRef?.current && editSectionRef.current(start, end, caret), 0)
+      return
+    }
+    setMenu(null)
+    setLineSel(null)
+    if (!source.trim()) return startEdit(0)
+    startEdit(start, undefined, Math.max(start + 1, end), caret)
+  }
+  const editSectionRef = useRef(editSection)
+  editSectionRef.current = editSection
+
+  /** Top-level headings: where their 編集 button goes, and the section each one heads. */
+  const sections = useMemo(() => {
+    const hs = liveTree.children.flatMap((n) => (n.type === 'heading' ? [{ depth: (n as { depth: number }).depth, start: n.position!.start.offset!, end: n.position!.end.offset! }] : []))
+    return hs.map((h, i) => {
+      const next = hs.slice(i + 1).find((x) => x.depth <= h.depth)
+      let end = next ? next.start : source.length
+      while (end > h.start && /\s/.test(source[end - 1])) end--
+      return { start: h.start, headEnd: h.end, end }
+    })
+  }, [liveTree, source])
+  const [headButtons, setHeadButtons] = useState<{ x: number; y: number; h: number }[]>([])
 
   // ------------------------------------------------------------ line numbers
 
@@ -486,6 +519,19 @@ export function DocEditor(props: DocEditorProps) {
       out.push({ a: L + 1, b: L + 1, y, h: Math.max(bot - y, 4), unitEnd })
     }
     setGutter(out.map(({ unitEnd: _u, ...e }) => e))
+    // 編集 buttons right after each top-level heading's text.
+    const hs = [...root.children].filter((el) => /^H[1-6]$/.test(el.tagName))
+    setHeadButtons(
+      hs.map((el) => {
+        const rr = document.createRange()
+        rr.selectNodeContents(el)
+        const rects = rr.getClientRects()
+        const last = rects[rects.length - 1] ?? el.getBoundingClientRect()
+        const box = el.getBoundingClientRect()
+        // A heading reaching the right edge: keep the button inside the page.
+        return { x: Math.min(last.right - root.getBoundingClientRect().left, root.clientWidth - 60), y: box.top - rootTop, h: box.height }
+      }),
+    )
   }, [source, runs, liveTree, listMode])
 
   useLayoutEffect(() => {
@@ -1112,7 +1158,7 @@ export function DocEditor(props: DocEditorProps) {
   const editSelection = () => {
     const range = selectionRange()
     setMenu(null)
-    if (range) startEdit(range[0], undefined, range[1], lastPointer.current === 'touch')
+    if (range) startEdit(range[0], undefined, range[1], lastPointer.current === 'touch' ? range[1] : undefined)
   }
 
   const onContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1309,6 +1355,31 @@ export function DocEditor(props: DocEditorProps) {
                 style={{ top: g.y, height: g.h }}
                 onMouseDown={(e) => onGutterMouseDown(e, g)}
               />
+            ))}
+          </div>
+        )}
+        {!edit && !readOnly && headButtons.length === sections.length && (
+          <div className="head-edits" data-testid="head-edits">
+            {sections.map((sec, i) => (
+              <button
+                key={sec.start}
+                className="head-edit"
+                style={{ left: headButtons[i].x + 8, top: headButtons[i].y, height: headButtons[i].h }}
+                title="この見出しの節（次の同じレベルの見出しまで）を編集"
+                aria-label="この節を編集"
+                data-testid="head-edit"
+                tabIndex={-1}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  editSection(sec.start, sec.end, sec.headEnd)
+                }}
+              >
+                <span>編集</span>
+              </button>
             ))}
           </div>
         )}

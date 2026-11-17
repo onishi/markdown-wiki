@@ -281,7 +281,21 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           {actions}
         </div>
       )}
-      <h1 className="page-title">{page.name.split('/').pop()}</h1>
+      <div className="title-row">
+        <h1 className="page-title">{page.name.split('/').pop()}</h1>
+        {canEdit && (
+          <button
+            className="head-edit title-edit"
+            title="ページ全体をまとめて編集"
+            aria-label="ページ全体を編集"
+            data-testid="edit-page"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => editorHandle.current?.editAll()}
+          >
+            <span>編集</span>
+          </button>
+        )}
+      </div>
       <PageMeta who={saver.savedAt ? 'あなた' : page.updatedByName} at={saver.savedAt ?? page.updatedAt} />
       {notice && (
         <div className="notice" role="status">
