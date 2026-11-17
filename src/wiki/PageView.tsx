@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { HistoryDialog } from './HistoryDialog'
 import { HelpDialog } from './HelpDialog'
 import { AiDialog } from './AiDialog'
@@ -82,12 +83,13 @@ function PageRouteFor({ name }: { name: string }) {
   return <PageView key={`${state.page.id}:${nonce}`} loaded={state} reload={() => setNonce((n) => n + 1)} />
 }
 
-function Breadcrumb({ name }: { name: string }) {
+function Breadcrumb({ name, inHeader }: { name: string; inHeader?: boolean }) {
   const { wiki, pages } = useWiki()
   const segs = name.split('/')
   // Root crumb: the wiki's top page (or the wiki itself), unless this page is the top page or under it.
+  // In the header the wiki's name is already shown just before it.
   const top = wiki.topPageId ? (pages.find((p) => p.id === wiki.topPageId)?.name ?? wiki.topPage ?? null) : null
-  const showRoot = !top || (name !== top && !name.startsWith(top + '/'))
+  const showRoot = top ? name !== top && !name.startsWith(top + '/') : !inHeader
   return (
     <nav className="breadcrumb" aria-label="階層" data-testid="breadcrumb">
       {showRoot && (
@@ -112,7 +114,7 @@ function Breadcrumb({ name }: { name: string }) {
 }
 
 function MissingPage({ name, children, onCreated }: { name: string; children: { id: string; name: string }[]; onCreated: () => void }) {
-  const { wiki, canEdit, reloadPages } = useWiki()
+  const { wiki, canEdit, reloadPages, header } = useWiki()
   const [busy, setBusy] = useState(false)
   const create = async () => {
     setBusy(true)
@@ -129,7 +131,7 @@ function MissingPage({ name, children, onCreated }: { name: string; children: { 
   }
   return (
     <div className="page">
-      <Breadcrumb name={name} />
+      {header ? createPortal(<Breadcrumb name={name} inHeader />, header.title) : <Breadcrumb name={name} />}
       <h1 className="page-title missing-title">{name.split('/').pop()}</h1>
       <p className="muted">このページはまだ作成されていません。</p>
       {canEdit ? (
@@ -156,7 +158,7 @@ function MissingPage({ name, children, onCreated }: { name: string; children: { 
 }
 
 function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reload: () => void }) {
-  const { wiki, role, canEdit, resolveWiki, absoluteWiki, pages, reloadPages, openNewPage, setOutline } = useWiki()
+  const { wiki, role, canEdit, resolveWiki, absoluteWiki, pages, reloadPages, openNewPage, setOutline, header } = useWiki()
   const editorHandle = useRef<DocEditorHandle | null>(null)
   const { me } = useSession()
   const nav = useNavigate()
@@ -169,14 +171,6 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
   )
   const [dialog, setDialog] = useState<'rename' | 'delete' | 'history' | 'publish' | null>(null)
   const [publishedAt, setPublishedAt] = useState(page.publishedAt ?? null)
-  // The sticky header gets a bottom border once the page has scrolled under it.
-  const [stuck, setStuck] = useState(false)
-  useEffect(() => {
-    const on = () => setStuck(window.scrollY > 4)
-    on()
-    window.addEventListener('scroll', on, { passive: true })
-    return () => window.removeEventListener('scroll', on)
-  }, [])
   const [ai, setAi] = useState<{ content: string; selection: { start: number; end: number; editing: boolean } | null } | null>(null)
   const aiReady = canEdit && wiki.aiEnabled && wiki.aiAvailable
   const askAi = () => {
@@ -238,44 +232,55 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
     }
   }, [wiki.id, page.id, pages])
 
+  const actions = (
+    <div className="page-actions">
+      {publishedAt !== null && (
+        <button className="tag tag-public" onClick={() => setDialog('publish')} title="ログインしていない人も読めます" data-testid="public-badge">
+          公開中
+        </button>
+      )}
+      <SaveIndicator saver={saver} onConflict={() => setShowConflict(true)} />
+      {aiReady && (
+        <button
+          className="btn btn-small"
+          disabled={saver.status === 'conflict'}
+          title={editing ? '編集中のブロック（または選択した行）の修正を AI に提案してもらう' : '選択した部分（またはページ全体）の修正を AI に提案してもらう'}
+          // Keep the selection (document or source editor): it decides what the AI rewrites.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={askAi}
+          data-testid="ai-button"
+        >
+          AI
+        </button>
+      )}
+      <button className="btn btn-small" onClick={() => setDialog('history')} data-testid="history">
+        履歴
+      </button>
+      {canEdit && (
+        <PageMenu
+          onChild={() => openNewPage(page.name + '/')}
+          onRename={() => setDialog('rename')}
+          onDelete={() => setDialog('delete')}
+          onPublish={role === 'owner' ? () => setDialog('publish') : undefined}
+          published={publishedAt !== null}
+        />
+      )}
+    </div>
+  )
+
   return (
     <div className="page">
-      <div className={'page-head' + (stuck ? ' stuck' : '')}>
-        <Breadcrumb name={page.name} />
-        <div className="page-actions">
-          {publishedAt !== null && (
-            <button className="tag tag-public" onClick={() => setDialog('publish')} title="ログインしていない人も読めます" data-testid="public-badge">
-              公開中
-            </button>
-          )}
-          <SaveIndicator saver={saver} onConflict={() => setShowConflict(true)} />
-          {aiReady && (
-            <button
-              className="btn btn-small"
-              disabled={saver.status === 'conflict'}
-              title={editing ? '編集中のブロック（または選択した行）の修正を AI に提案してもらう' : '選択した部分（またはページ全体）の修正を AI に提案してもらう'}
-              // Keep the selection (document or source editor): it decides what the AI rewrites.
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={askAi}
-              data-testid="ai-button"
-            >
-              AI
-            </button>
-          )}
-          <button className="btn btn-small" onClick={() => setDialog('history')} data-testid="history">
-            履歴
-          </button>
-          {canEdit && (
-            <PageMenu
-              onChild={() => openNewPage(page.name + '/')}
-              onRename={() => setDialog('rename')}
-              onDelete={() => setDialog('delete')}
-              onPublish={role === 'owner' ? () => setDialog('publish') : undefined}
-              published={publishedAt !== null}
-            />
-          )}
+      {header ? (
+        <>
+          {createPortal(<Breadcrumb name={page.name} inHeader />, header.title)}
+          {createPortal(actions, header.actions)}
+        </>
+      ) : (
+        <div className="page-head">
+          <Breadcrumb name={page.name} />
+          {actions}
         </div>
-      </div>
+      )}
       <h1 className="page-title">{page.name.split('/').pop()}</h1>
       <PageMeta who={saver.savedAt ? 'あなた' : page.updatedByName} at={saver.savedAt ?? page.updatedAt} />
       {notice && (

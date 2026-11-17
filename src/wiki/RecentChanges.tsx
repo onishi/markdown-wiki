@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api, pageUrl } from '../api'
 import { lineDiff } from '../../shared/diff'
-import { useWiki } from './WikiLayout'
+import { useWiki, HeaderTitle } from './WikiLayout'
 import { DiffLines } from './DiffLines'
 
 export interface Change {
@@ -60,6 +60,7 @@ export function RecentChanges() {
 
   return (
     <div className="page">
+      <HeaderTitle>最近の更新</HeaderTitle>
       <h1 className="page-title">最近の更新</h1>
       {error && <div className="notice">{error}</div>}
       {!changes ? (

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api, ApiError, pageUrl, ROLE_LABEL, type Role } from '../api'
 import { PageName } from './WikiHome'
 import { useSession } from '../App'
-import { useWiki } from './WikiLayout'
+import { useWiki, HeaderTitle } from './WikiLayout'
 import { Modal } from './Modal'
 import { normalizeSlug, validateSlug } from '../../shared/wikiSlug'
 
@@ -65,6 +65,7 @@ export function WikiSettings() {
 
   return (
     <div className="page settings">
+      <HeaderTitle>共有設定・メンバー</HeaderTitle>
       <h1 className="page-title">共有設定</h1>
       <p className="muted">
         この wiki は<strong>非公開</strong>で、メンバーだけが読めます

@@ -248,10 +248,26 @@ button.tree-toggle:hover { background: var(--border); color: var(--fg); }
 .page-loading { padding: 40px; }
 .page-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; min-height: 32px; }
 /* Stays at the top while the page scrolls (desktop; on phones the mobile bar is the sticky one). */
+/* Desktop: one header row across the top — wiki | page path | page actions | search. */
 @media (min-width: 761px) {
   html { scroll-padding-top: 64px; }
-  .page-head { position: sticky; top: 0; z-index: 12; margin: -24px -32px 0 -60px; padding: 10px 32px 10px 60px; background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid transparent; }
-  .page-head.stuck { border-bottom-color: var(--border); }
+  .layout { grid-template-rows: auto 1fr; }
+  .app-header { grid-column: 1 / -1; position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 12px; height: 48px; padding-right: 16px; background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(6px); border-bottom: 1px solid var(--border); }
+  .app-header-wiki { flex: none; width: 260px; height: 100%; display: flex; align-items: center; padding: 0 12px; background: var(--bg-side); border-right: 1px solid var(--border); }
+  .app-header-wiki .sidebar-top { flex: 1; min-width: 0; }
+  .app-header-wiki .wiki-switch { border: 0; padding: 4px 6px; font-size: 15px; border-radius: 6px; cursor: pointer; }
+  .app-header-wiki .wiki-switch:hover { background: var(--accent-soft); }
+  .app-header-title { flex: 1; min-width: 0; overflow: hidden; }
+  .app-header-title .breadcrumb { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+  .app-header-title .crumb-current { color: var(--fg); font-weight: 600; }
+  .header-view { font-size: 14px; font-weight: 600; }
+  .app-header-actions { flex: none; }
+  .app-header-actions:empty { display: none; }
+  .header-search { flex: none; color: var(--fg-muted); gap: 8px; }
+  .header-search kbd { font-size: 10.5px; }
+  .sidebar { top: 48px; height: calc(100vh - 48px); }
+  .page { padding-top: 8px; }
+  .settings-msg { top: 56px; }
 }
 .breadcrumb { font-size: 13px; color: var(--fg-muted); }
 .breadcrumb a { color: var(--fg-muted); text-decoration: none; }
