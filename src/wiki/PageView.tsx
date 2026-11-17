@@ -178,6 +178,10 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
     return () => window.removeEventListener('scroll', on)
   }, [])
   const [ai, setAi] = useState<{ content: string; selection: { start: number; end: number; editing: boolean } | null } | null>(null)
+  const aiReady = canEdit && wiki.aiEnabled && wiki.aiAvailable
+  const askAi = () => {
+    if (saver.status !== 'conflict') setAi({ content: saver.content, selection: editorHandle.current?.selectedUnits() ?? null })
+  }
   const [roNotice, setRoNotice] = useState(false)
   const [help, setHelp] = useState(false)
 
@@ -245,14 +249,14 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
             </button>
           )}
           <SaveIndicator saver={saver} onConflict={() => setShowConflict(true)} />
-          {canEdit && wiki.aiEnabled && wiki.aiAvailable && (
+          {aiReady && (
             <button
               className="btn btn-small"
               disabled={saver.status === 'conflict'}
               title={editing ? '編集中のブロック（または選択した行）の修正を AI に提案してもらう' : '選択した部分（またはページ全体）の修正を AI に提案してもらう'}
               // Keep the selection (document or source editor): it decides what the AI rewrites.
               onMouseDown={(e) => e.preventDefault()}
-              onClick={() => setAi({ content: saver.content, selection: editorHandle.current?.selectedUnits() ?? null })}
+              onClick={askAi}
               data-testid="ai-button"
             >
               AI
@@ -292,6 +296,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
         handleRef={editorHandle}
         wikiNames={wikiNames}
         onUploadImage={canEdit ? (f) => uploadImage(wiki.id, f, f.name || 'image.png') : undefined}
+        onAskAi={aiReady ? askAi : undefined}
         onReadOnlyAttempt={() => {
           setRoNotice(true)
           setTimeout(() => setRoNotice(false), 2000)

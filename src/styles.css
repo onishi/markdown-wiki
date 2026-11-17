@@ -300,7 +300,6 @@ button.tree-toggle:hover { background: var(--border); color: var(--fg); }
   .sidebar { position: static; height: auto; }
   .mode-bar { left: 0; }
   .page { padding: 16px; }
-  .gutter { display: none; }
   .conflict-grid { grid-template-columns: 1fr; }
 }
 .try-link { margin: 20px 0 0; text-align: center; }
@@ -557,3 +556,49 @@ button.tag { cursor: pointer; background: none; font: inherit; font-size: 11px; 
 .public-wiki { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .public-page { max-width: 820px; margin: 0 auto; padding: 24px 16px 64px; }
 .public-foot { margin-top: 48px; padding-top: 12px; border-top: 1px solid var(--border); }
+
+/* ------------------------------------------------------------------ touch: editing toolbar */
+.touch-bar { position: fixed; left: 0; right: 0; z-index: 50; display: flex; align-items: center; gap: 6px; padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); background: color-mix(in srgb, var(--bg-side) 96%, transparent); backdrop-filter: blur(8px); border-top: 1px solid var(--border); font-family: var(--sans, inherit); }
+.touch-bar-tools { flex: 1; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+.touch-bar-tools::-webkit-scrollbar { display: none; }
+.touch-bar button { flex: none; min-width: 38px; height: 38px; padding: 0 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; font-size: 15px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.touch-bar button:active { background: var(--accent-soft); }
+.touch-bar .touch-bar-done { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; padding: 0 16px; }
+/* Room below the text being edited, so the toolbar never covers it. */
+.is-editing .src-editor { scroll-margin-bottom: 72px; }
+body:has(.touch-bar) .page, body:has(.sel-bar) .page { padding-bottom: 140px; }
+
+/* ------------------------------------------------------------------ touch: selection bar */
+.sel-bar { position: fixed; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); z-index: 45; display: grid; gap: 6px; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 6px 24px rgba(0,0,0,.18); font-family: var(--sans, inherit); }
+.sel-bar-head { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--fg-muted); }
+.sel-bar-head .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sel-bar-actions { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.sel-bar-actions::-webkit-scrollbar { display: none; }
+.sel-bar button { flex: none; height: 38px; min-width: 40px; padding: 0 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--fg); font: inherit; font-size: 14px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.sel-bar button:active { background: var(--accent-soft); }
+.sel-bar button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.sel-bar-head button { height: 32px; min-width: 36px; padding: 0 8px; font-size: 13px; }
+.sel-bar button:disabled { opacity: .4; }
+
+/* ------------------------------------------------------------------ touch: sizes and gutter */
+@media (max-width: 760px) {
+  /* Block bars stay on phones, in a slim left margin: tap one to select that block. */
+  .page { padding-left: 28px; }
+  .gutter { display: block; left: -27px; width: 24px; }
+  .ln { width: 24px; }
+  .ln::before { right: 9px; opacity: .14; }
+  .page-head { gap: 6px; }
+  /* Dialogs become bottom sheets. */
+  .modal-back { place-items: end stretch; padding: 0; }
+  .modal { max-width: none; max-height: 92dvh; border-radius: 14px 14px 0 0; padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+  .modal-actions { bottom: calc(-20px - env(safe-area-inset-bottom)); padding-bottom: calc(20px + env(safe-area-inset-bottom)); margin-bottom: calc(-20px - env(safe-area-inset-bottom)); }
+}
+@media (hover: none) and (pointer: coarse) {
+  .btn-small { min-height: 34px; padding-left: 12px; padding-right: 12px; }
+  .menu-pop button { padding: 11px 14px; font-size: 15px; }
+  .tree-row a { padding-top: 8px; padding-bottom: 8px; font-size: 15px; }
+  .side-link, .outline-item { padding-top: 9px; padding-bottom: 9px; font-size: 15px; }
+  .doc-menu button { min-height: 36px; padding-left: 14px; padding-right: 14px; }
+  .src-hint { display: none; }
+  .ln::before { opacity: .2; }
+}

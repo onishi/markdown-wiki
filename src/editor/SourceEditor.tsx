@@ -1,6 +1,6 @@
-import { createContext, useContext, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { continueOnEnter } from '../../shared/markdown/continueLine'
-import { tableTab, toggleWrap, type TextEdit } from '../../shared/markdown/inline'
+import { tableTab, toggleLines, toggleWrap, type LineKind, type TextEdit } from '../../shared/markdown/inline'
 import { rankNames } from '../../shared/fuzzy'
 
 export interface EditCtxValue {
@@ -49,6 +49,7 @@ export function isImeKey(e: React.KeyboardEvent | KeyboardEvent, lastComposition
  */
 export function SourceEditor() {
   const ctx = useContext(EditCtx)!
+  const [touch] = useState(isTouchUi)
   const compEnd = useRef(-1e9)
 
   // `[[` completion
@@ -200,7 +201,7 @@ export function SourceEditor() {
         }}
       />
       {comp && items.length > 0 && (
-        <ul className="wiki-complete" role="listbox" data-testid="wiki-complete" style={{ left: comp.x, top: comp.y + 4 }}>
+        <ul className="wiki-complete" role="listbox" data-testid="wiki-complete" style={{ left: Math.max(8, Math.min(comp.x, window.innerWidth - 228)), top: comp.y + 4 }}>
           {items.map((n, i) => (
             <li key={n} role="option" aria-selected={i === compSel}>
               <button className={i === compSel ? 'on' : ''} onMouseDown={(e) => (e.preventDefault(), accept(n))} onMouseEnter={() => setCompSel(i)}>
@@ -210,12 +211,81 @@ export function SourceEditor() {
           ))}
         </ul>
       )}
-      <div className="src-hint">
-        Markdown{ctx.wikiNames ? ' · [[ でページ名を補完' : ''} ·{' '}
-        <button className="src-done" onMouseDown={(e) => e.preventDefault()} onClick={() => ctx.exit()} data-testid="src-done">
-          完了 <kbd>Esc</kbd>
-        </button>
+      {touch ? (
+        <TouchToolbar onDone={() => ctx.exit()} taRef={ctx.taRef} wiki={!!ctx.wikiNames} />
+      ) : (
+        <div className="src-hint">
+          Markdown{ctx.wikiNames ? ' · [[ でページ名を補完' : ''} ·{' '}
+          <button className="src-done" onMouseDown={(e) => e.preventDefault()} onClick={() => ctx.exit()} data-testid="src-done">
+            完了 <kbd>Esc</kbd>
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Touch screens (no hover, coarse pointer): phones and tablets. */
+export function isTouchUi() {
+  return typeof matchMedia === 'function' && matchMedia('(hover: none) and (pointer: coarse)').matches
+}
+
+/**
+ * Phones: Markdown buttons right above the on-screen keyboard (no shortcuts there).
+ * Pinned to the bottom of the visual viewport, which shrinks when the keyboard opens.
+ * Buttons never take the focus, so the keyboard stays up.
+ */
+function TouchToolbar({ onDone, taRef, wiki }: { onDone: () => void; taRef: React.MutableRefObject<HTMLTextAreaElement | null>; wiki: boolean }) {
+  const [lift, setLift] = useState(0)
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const place = () => setLift(Math.max(0, window.innerHeight - vv.height - vv.offsetTop))
+    place()
+    vv.addEventListener('resize', place)
+    vv.addEventListener('scroll', place)
+    return () => {
+      vv.removeEventListener('resize', place)
+      vv.removeEventListener('scroll', place)
+    }
+  }, [])
+  const run = (f: (ta: HTMLTextAreaElement) => void) => {
+    const ta = taRef.current
+    if (!ta) return
+    ta.focus({ preventScroll: true })
+    f(ta)
+  }
+  const line = (k: LineKind) => run((ta) => applyTextEdit(ta, toggleLines(ta.value, ta.selectionStart, ta.selectionEnd, k)))
+  const keep = (e: React.SyntheticEvent) => e.preventDefault()
+  // Selected text becomes the link's page name; otherwise `[[` opens page name completion.
+  const link = (ta: HTMLTextAreaElement) => {
+    const [s, e] = [ta.selectionStart, ta.selectionEnd]
+    const sel = ta.value.slice(s, e)
+    if (sel && !sel.includes('\n')) applyTextEdit(ta, { from: s, to: e, text: `[[${sel}]]`, selStart: s + sel.length + 4, selEnd: s + sel.length + 4 })
+    else {
+      if (s !== e) ta.setSelectionRange(e, e)
+      document.execCommand('insertText', false, '[[')
+    }
+  }
+  const B = ({ label, title, act, id }: { label: React.ReactNode; title: string; act: () => void; id?: string }) => (
+    <button type="button" title={title} aria-label={title} onMouseDown={keep} onPointerDown={keep} onClick={act} data-testid={id}>
+      {label}
+    </button>
+  )
+  return (
+    <div className="touch-bar" style={{ bottom: lift }} data-testid="touch-bar" role="toolbar" aria-label="書式">
+      <div className="touch-bar-tools">
+        <B label="H" title="見出し（## → ### → なし）" act={() => line('heading')} id="tb-heading" />
+        <B label={<b>B</b>} title="太字" act={() => run((ta) => applyTextEdit(ta, toggleWrap(ta.value, ta.selectionStart, ta.selectionEnd, '**')))} id="tb-bold" />
+        <B label="・" title="箇条書き" act={() => line('list')} id="tb-list" />
+        <B label="☑" title="チェックリスト" act={() => line('task')} id="tb-task" />
+        <B label="⇤" title="インデントを戻す" act={() => line('outdent')} />
+        <B label="⇥" title="インデント" act={() => line('indent')} id="tb-indent" />
+        {wiki && <B label="[[" title="ページへのリンク（ページ名を補完）" act={() => run((ta) => link(ta))} id="tb-link" />}
       </div>
+      <button type="button" className="touch-bar-done" onMouseDown={keep} onClick={onDone} data-testid="src-done">
+        完了
+      </button>
     </div>
   )
 }

@@ -110,3 +110,69 @@ export function tableTab(src: string, pos: number, back: boolean): TextEdit | nu
   const row = '\n|' + '   |'.repeat(cols)
   return { from: end, to: end, text: row, selStart: end + 3, selEnd: end + 3 }
 }
+
+export type LineKind = 'heading' | 'list' | 'task' | 'quote' | 'indent' | 'outdent'
+
+const LIST_MARK = /^(\s*)(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/
+const TASK_MARK = /^(\s*)[-*+]\s+\[[ xX]\]\s+/
+const HEADING_MARK = /^(#{1,6})\s+/
+const QUOTE_MARK = /^>\s?/
+
+/** One line's new text for a toolbar line action (`all`: every selected line already has it, so remove). */
+function relineOne(line: string, kind: LineKind, all: boolean, level: number): string {
+  switch (kind) {
+    case 'heading': {
+      const body = line.replace(HEADING_MARK, '')
+      return level ? '#'.repeat(level) + ' ' + body : body
+    }
+    case 'list':
+    case 'task': {
+      const indent = /^\s*/.exec(line)![0]
+      const body = line.replace(LIST_MARK, '').replace(/^\s*/, '')
+      if (all) return indent + body
+      return indent + (kind === 'task' ? '- [ ] ' : '- ') + body
+    }
+    case 'quote':
+      return all ? line.replace(QUOTE_MARK, '') : '> ' + line
+    case 'indent':
+      return '  ' + line
+    case 'outdent':
+      return line.replace(/^ {1,2}|^\t/, '')
+  }
+}
+
+/**
+ * The phone toolbar's line actions on the lines touched by [s, e): heading (none → ## →
+ * ### → none), bullet list, task list and quote (toggled), indent / outdent.
+ * The caret keeps its place in the text; a range ends up selecting the whole lines.
+ */
+export function toggleLines(src: string, s: number, e: number, kind: LineKind): TextEdit {
+  const from = src.lastIndexOf('\n', s - 1) + 1
+  const endAt = e > s && src[e - 1] === '\n' ? e - 1 : e
+  const nl = src.indexOf('\n', endAt)
+  const to = nl < 0 ? src.length : nl
+  const lines = src.slice(from, to).split('\n')
+  const filled = lines.filter((l) => l.trim())
+  const has = (l: string) =>
+    kind === 'task' ? TASK_MARK.test(l) : kind === 'list' ? /^\s*[-*+]\s+/.test(l) && !TASK_MARK.test(l) : kind === 'quote' ? QUOTE_MARK.test(l) : false
+  const all = filled.length > 0 && filled.every(has)
+  const cur = HEADING_MARK.exec(lines[0])?.[1].length ?? 0
+  const level = cur === 0 ? 2 : cur === 2 ? 3 : 0
+  const out = lines.map((l) => (l.trim() || kind === 'quote' ? relineOne(l, kind, all, level) : l))
+  const text = out.join('\n')
+  if (s === e) {
+    // Same position in the line's body.
+    const oldBodyStart = lines[0].length - bodyOf(lines[0], kind).length
+    const newBodyStart = out[0].length - bodyOf(out[0], kind).length
+    const caret = from + Math.max(newBodyStart, s - from - oldBodyStart + newBodyStart)
+    return { from, to, text, selStart: caret, selEnd: caret }
+  }
+  return { from, to, text, selStart: from, selEnd: from + text.length }
+}
+
+function bodyOf(line: string, kind: LineKind): string {
+  if (kind === 'heading') return line.replace(HEADING_MARK, '')
+  if (kind === 'quote') return line.replace(QUOTE_MARK, '')
+  if (kind === 'list' || kind === 'task') return line.replace(LIST_MARK, '')
+  return line.replace(/^\s*/, '')
+}

@@ -31,6 +31,8 @@ export interface DocEditorProps {
   wikiNames?: string[]
   /** Store a pasted / dropped image and return its URL (no handler: images are not accepted). */
   onUploadImage?: (file: File) => Promise<{ url: string }>
+  /** Ask the AI about the current selection (offered in the touch selection bar). */
+  onAskAi?: () => void
 }
 
 export interface DocEditorHandle {
@@ -97,6 +99,10 @@ export function DocEditor(props: DocEditorProps) {
   const pending = useRef<{ caret?: number; selEnd?: number; anchorY?: number; focusDoc?: boolean; top?: boolean; reveal?: boolean } | null>(null)
   const [, forceRender] = useState(0)
   const [toast, setToast] = useState<string | null>(null)
+  /** A non-empty selection in the document (touch screens show the selection bar for it). */
+  const [hasRange, setHasRange] = useState(false)
+  /** Pointer type of the last press: 'touch' gets the tap menu and the selection bar. */
+  const lastPointer = useRef('mouse')
   useEffect(() => {
     if (!toast) return
     const t = setTimeout(() => setToast(null), 1800)
@@ -178,6 +184,7 @@ export function DocEditor(props: DocEditorProps) {
   const paint = useCallback(() => {
     const root = rootRef.current
     const sel = selectionInDoc()
+    setHasRange(!!sel && !sel.isCollapsed && !editRef.current)
     if (!root || !sel || editRef.current) {
       setCaret(null)
       return
@@ -240,7 +247,7 @@ export function DocEditor(props: DocEditorProps) {
 
   /** Enter edit mode at a source offset; `open` opens a new line below/above (vim o / O). */
   const startEdit = useCallback(
-    (offset: number, open?: 'below' | 'above', rangeEnd?: number) => {
+    (offset: number, open?: 'below' | 'above', rangeEnd?: number, caretAtEnd?: boolean) => {
       if (readOnly) {
         propsRef.current.onReadOnlyAttempt?.()
         return
@@ -261,7 +268,9 @@ export function DocEditor(props: DocEditorProps) {
       let text = source.slice(u.start, u.end)
       let caretIn = Math.min(Math.max(at - u.start, 0), text.length)
       // Keep the selected range selected in the source editor.
-      const selEndIn = rangeEnd !== undefined ? Math.min(Math.max(rangeEnd - u.start, 0), text.length) : undefined
+      let selEndIn = rangeEnd !== undefined ? Math.min(Math.max(rangeEnd - u.start, 0), text.length) : undefined
+      // Touch: a selected range would be replaced by the first key typed; start at its end instead.
+      if (caretAtEnd && selEndIn !== undefined) [caretIn, selEndIn] = [selEndIn, undefined]
       if (open && u.kind !== 'empty') {
         const o = openLine(text, caretIn, open, kind)
         text = o.text
@@ -538,8 +547,43 @@ export function DocEditor(props: DocEditorProps) {
     e.preventDefault()
     e.stopPropagation()
     if (editRef.current) exitEdit()
-    if (e.shiftKey && lineSel) selectLines(Math.min(lineSel.a, g.a), Math.max(lineSel.b, g.b))
+    const sel = selectionInDoc()
+    const live = lineSel && sel && !sel.isCollapsed
+    if (live && lastPointer.current === 'touch') {
+      // Touch (no Shift): tapping more bars adds their blocks; tapping the only selected one clears.
+      if (g.a === lineSel.a && g.b === lineSel.b) clearSelection()
+      else selectLines(Math.min(lineSel.a, g.a), Math.max(lineSel.b, g.b))
+    } else if (e.shiftKey && lineSel) selectLines(Math.min(lineSel.a, g.a), Math.max(lineSel.b, g.b))
     else selectLines(g.a, g.b)
+  }
+
+  const clearSelection = () => {
+    document.getSelection()?.removeAllRanges()
+    setHasRange(false)
+    setLineSel(null)
+    setMenu(null)
+  }
+
+  /** Touch selection bar: take in the block above / below. */
+  const growSelection = (dir: -1 | 1) => {
+    if (!lineSel) return
+    const gs = gutterRef.current
+    const g = dir < 0 ? [...gs].reverse().find((x) => x.b < lineSel.a) : gs.find((x) => x.a > lineSel.b)
+    if (!g) return
+    selectLines(Math.min(lineSel.a, g.a), Math.max(lineSel.b, g.b))
+    const root = rootRef.current!.getBoundingClientRect()
+    const top = root.top + g.y
+    if (top < 60 || top + g.h > window.innerHeight - 140) window.scrollBy({ top: dir < 0 ? top - 80 : top + g.h - window.innerHeight + 160, behavior: 'smooth' })
+  }
+
+  /** Touch tap menu: select the block the caret is in. */
+  const selectBlockAtCaret = () => {
+    const off = focusOffset()
+    if (off == null) return
+    const line = source.slice(0, off).split('\n').length
+    const g = gutterRef.current.find((x) => x.a <= line && line <= x.b) ?? [...gutterRef.current].reverse().find((x) => x.a <= line)
+    setMenu(null)
+    if (g) selectLines(g.a, g.b)
   }
 
   const copyPermalink = async () => {
@@ -971,7 +1015,6 @@ export function DocEditor(props: DocEditorProps) {
     return off == null ? null : m.sourceToDom(off)
   }
 
-  const lastPointer = useRef('mouse')
   const onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const target = e.target as Element
     if (target.closest('.src-editor') || target.closest('.doc-menu')) return
@@ -1069,7 +1112,7 @@ export function DocEditor(props: DocEditorProps) {
   const editSelection = () => {
     const range = selectionRange()
     setMenu(null)
-    if (range) startEdit(range[0], undefined, range[1])
+    if (range) startEdit(range[0], undefined, range[1], lastPointer.current === 'touch')
   }
 
   const onContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -1223,6 +1266,7 @@ export function DocEditor(props: DocEditorProps) {
   editCtxRef.current = editCtx
 
   const hasSelection = menu?.kind === 'context' ? !!selectionRange() : true
+  const touchUi = lastPointer.current === 'touch'
 
   return (
     <EditCtx.Provider value={editCtx}>
@@ -1270,7 +1314,7 @@ export function DocEditor(props: DocEditorProps) {
         )}
         {elements}
         {caret && focused && !edit && !atEnd && <div className="caret" data-testid="caret" style={{ left: caret.x, top: caret.y, height: caret.h }} key={`${caret.x},${caret.y}`} />}
-        {menu && !edit && (
+        {menu && !edit && !(touchUi && menu.kind === 'selection') && (
           <div className={`doc-menu doc-menu-${menu.kind}`} style={{ left: menu.x, top: menu.y }} onMouseDown={(e) => e.preventDefault()} role="menu">
             {menu.kind === 'link' && menu.link && (
               <>
@@ -1293,13 +1337,10 @@ export function DocEditor(props: DocEditorProps) {
                 編集
               </button>
             )}
-            {menu.kind === 'selection' && lastPointer.current === 'touch' && !readOnly && (
-              <>
-                <button onClick={editSelection} role="menuitem">
-                  選択範囲を編集
-                </button>
-                <span className="doc-menu-sep" />
-              </>
+            {menu.kind === 'tap' && (
+              <button role="menuitem" data-testid="tap-select" onClick={selectBlockAtCaret}>
+                選択
+              </button>
             )}
             {lineSel && menu.kind !== 'link' && menu.kind !== 'tap' && (
               <>
@@ -1361,6 +1402,51 @@ export function DocEditor(props: DocEditorProps) {
             </>
           )}
         </button>
+      )}
+      {touchUi && hasRange && !edit && (
+        <div className="sel-bar" data-testid="sel-bar" role="toolbar" aria-label="選択範囲" onMouseDown={(e) => e.preventDefault()}>
+          <div className="sel-bar-head">
+            <span className="grow" title="左の線をタップすると、そのブロックまで選択を広げます">
+              {lineSel ? `${gutter.filter((g) => g.b >= lineSel.a && g.a <= lineSel.b).length} ブロックを選択` : 'テキストを選択'}
+            </span>
+            {lineSel && (
+              <>
+                <button onClick={() => growSelection(-1)} aria-label="上のブロックも選択" title="上のブロックも選択" data-testid="sel-up">
+                  ↑
+                </button>
+                <button onClick={() => growSelection(1)} aria-label="下のブロックも選択" title="下のブロックも選択" data-testid="sel-down">
+                  ↓
+                </button>
+              </>
+            )}
+            <button onClick={clearSelection} aria-label="選択を解除" title="選択を解除" data-testid="sel-clear">
+              ✕
+            </button>
+          </div>
+          <div className="sel-bar-actions">
+            {!readOnly && (
+              <button className="primary" onClick={editSelection} data-testid="sel-edit">
+                編集
+              </button>
+            )}
+            {!readOnly && props.onAskAi && (
+              <button onClick={() => props.onAskAi!()} data-testid="sel-ai">
+                AI
+              </button>
+            )}
+            <button onClick={() => copyAs('plain')} data-testid="sel-copy">
+              コピー
+            </button>
+            <button onClick={() => copyAs('markdown')} data-testid="sel-copy-md">
+              Markdown
+            </button>
+            {lineSel && (
+              <button onClick={copyPermalink} data-testid="sel-permalink">
+                リンク
+              </button>
+            )}
+          </div>
+        </div>
       )}
     </EditCtx.Provider>
   )
