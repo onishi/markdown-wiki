@@ -250,9 +250,11 @@ test('top page: wiki URL without a page redirects there; page list stays reachab
   await expect(page.getByText('トップページを変更しました。')).toBeVisible()
   await page.goto(`/w/${wid}`)
   await expect(page.getByRole('heading', { name: /すべてのページ/ })).toBeVisible()
-  // Without a top page the root crumb is the wiki name.
+  // Without a top page the wiki name (the header's first item) leads the path.
   await page.goto(`/w/${wid}/p/${encodeURIComponent('メモ')}`)
-  await expect(page.getByTestId('breadcrumb')).toHaveText('トップ wiki/メモ')
+  await expect(page.getByTestId('breadcrumb')).toHaveText('メモ')
+  await expect(page.getByTestId('app-header')).toContainText('トップ wiki')
+  await expect(page.getByTestId('app-header')).toContainText('履歴') // page actions live in the header
 })
 
 test('wiki slug: /w/<slug>/p/<page> URLs; changing it keeps old URLs working', async ({ browser }) => {

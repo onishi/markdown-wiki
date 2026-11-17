@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError, pageUrl, ROLE_LABEL, type Me, type PageSummary, type Role, type WikiSummary } from '../api'
@@ -9,6 +10,7 @@ import { QuickOpen } from './QuickOpen'
 import { Outline } from '../editor/Outline'
 import { PublicPage } from './PublicPage'
 import type { OutlineItem } from '../../shared/markdown/outline'
+import { DESKTOP, useMedia } from '../useMedia'
 
 /** Set by the page view so the sidebar can show its outline. */
 export interface OutlineSource {
@@ -30,9 +32,17 @@ interface WikiCtxValue {
   /** ⌘K page switcher */
   openQuick: () => void
   setOutline: (o: OutlineSource | null) => void
+  /** Desktop header slots a view can fill (via portals): its title and its actions. null on phones. */
+  header: { title: HTMLElement; actions: HTMLElement } | null
 }
 const WikiCtx = createContext<WikiCtxValue | null>(null)
 export const useWiki = () => useContext(WikiCtx)!
+
+/** A view's name in the desktop header (nothing on phones, where the view's own heading is enough). */
+export function HeaderTitle({ children }: { children: React.ReactNode }) {
+  const { header } = useWiki()
+  return header ? createPortal(<span className="header-view">{children}</span>, header.title) : null
+}
 
 export function WikiLayout() {
   const { wid } = useParams()
@@ -45,6 +55,9 @@ export function WikiLayout() {
   const [noAccess, setNoAccess] = useState(false)
   const [newPage, setNewPage] = useState<string | null>(null)
   const [outline, setOutline] = useState<OutlineSource | null>(null)
+  const desktop = useMedia(DESKTOP)
+  const [titleSlot, setTitleSlot] = useState<HTMLElement | null>(null)
+  const [actionsSlot, setActionsSlot] = useState<HTMLElement | null>(null)
 
   const currentWid = useRef(wid)
   currentWid.current = wid
@@ -147,6 +160,7 @@ export function WikiLayout() {
     openNewPage: (prefill = '') => setNewPage(prefill),
     openQuick: () => setQuick(true),
     setOutline,
+    header: desktop && titleSlot && actionsSlot ? { title: titleSlot, actions: actionsSlot } : null,
   }
 
   const createAndOpen = async (name: string) => {
@@ -166,7 +180,19 @@ export function WikiLayout() {
   return (
     <WikiCtx.Provider value={value}>
       <div className="layout">
-        <Sidebar wikis={wikis} outline={outline} open={drawer} />
+        {desktop && (
+          <header className="app-header" data-testid="app-header">
+            <div className="app-header-wiki">
+              <WikiSwitch wikis={wikis} />
+            </div>
+            <div className="app-header-title" ref={setTitleSlot} />
+            <div className="app-header-actions" ref={setActionsSlot} />
+            <button className="btn btn-small header-search" onClick={() => setQuick(true)} data-testid="quick-open" title="ページを開く・検索">
+              ⌕ 検索 <kbd>{/Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'}K</kbd>
+            </button>
+          </header>
+        )}
+        <Sidebar wikis={wikis} outline={outline} open={drawer} desktop={desktop} />
         {drawer && <div className="drawer-back" onClick={() => setDrawer(false)} data-testid="drawer-back" />}
         <main className="main">
           {/* Phones: the sidebar becomes a drawer behind this bar. */}
@@ -209,10 +235,36 @@ export function WikiLayout() {
   )
 }
 
-function Sidebar({ wikis, outline, open }: { wikis: WikiSummary[]; outline: OutlineSource | null; open: boolean }) {
-  const { wiki, pages, canEdit, openNewPage, openQuick, role } = useWiki()
-  const { me, logout } = useSession()
+/** The wiki's name; choosing another one switches wikis. With the viewer's role next to it. */
+function WikiSwitch({ wikis }: { wikis: WikiSummary[] }) {
+  const { wiki, role } = useWiki()
   const nav = useNavigate()
+  return (
+    <div className="sidebar-top">
+      <select
+        className="wiki-switch"
+        value={wiki.slug}
+        aria-label="wiki を切り替え"
+        title="wiki を切り替え"
+        onChange={(e) => (e.target.value === '__home' ? nav('/') : nav(`/w/${e.target.value}`))}
+      >
+        {wikis.map((w) => (
+          <option key={w.id} value={w.slug}>
+            {w.name}
+          </option>
+        ))}
+        <option value="__home">＋ wiki 一覧・新規作成…</option>
+      </select>
+      <div className="role-badge" title="あなたの権限">
+        {ROLE_LABEL[role]}
+      </div>
+    </div>
+  )
+}
+
+function Sidebar({ wikis, outline, open, desktop }: { wikis: WikiSummary[]; outline: OutlineSource | null; open: boolean; desktop: boolean }) {
+  const { wiki, pages, canEdit, openNewPage } = useWiki()
+  const { me, logout } = useSession()
   const [q, setQ] = useState('')
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase()
@@ -236,27 +288,8 @@ function Sidebar({ wikis, outline, open }: { wikis: WikiSummary[]; outline: Outl
 
   return (
     <aside className={`sidebar ${open ? 'open' : ''}`} data-testid="sidebar">
-      <div className="sidebar-top">
-        <select
-          className="wiki-switch"
-          value={wiki.slug}
-          aria-label="wiki を切り替え"
-          onChange={(e) => (e.target.value === '__home' ? nav('/') : nav(`/w/${e.target.value}`))}
-        >
-          {wikis.map((w) => (
-            <option key={w.id} value={w.slug}>
-              {w.name}
-            </option>
-          ))}
-          <option value="__home">＋ wiki 一覧・新規作成…</option>
-        </select>
-        <div className="role-badge" title="あなたの権限">
-          {ROLE_LABEL[role]}
-        </div>
-      </div>
-      <button className="btn btn-block quick-btn" onClick={openQuick} data-testid="quick-open">
-        ページを開く… <kbd>{/Mac/.test(navigator.platform) ? '⌘' : 'Ctrl'}K</kbd>
-      </button>
+      {/* Desktop: the wiki switch and search are in the header. */}
+      {!desktop && <WikiSwitch wikis={wikis} />}
       {canEdit && (
         <button className="btn btn-block" onClick={() => openNewPage('')} data-testid="new-page">
           ＋ 新しいページ

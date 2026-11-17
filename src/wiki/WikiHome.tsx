@@ -1,7 +1,7 @@
 import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { pageUrl, type PageSummary } from '../api'
 import { fullTime, relTime } from '../time'
-import { useWiki } from './WikiLayout'
+import { useWiki, HeaderTitle } from './WikiLayout'
 
 export function WikiHome() {
   const { wiki, pages, canEdit, openNewPage } = useWiki()
@@ -15,7 +15,8 @@ export function WikiHome() {
   return (
     <div className="page">
       <div className="home-title">
-        <h1 className="page-title">{wiki.name}</h1>
+        <HeaderTitle>すべてのページ</HeaderTitle>
+      <h1 className="page-title">{wiki.name}</h1>
         {canEdit && pages.length > 0 && (
           <button className="btn" onClick={() => openNewPage('')}>
             ＋ 新しいページ
