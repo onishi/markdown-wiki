@@ -305,7 +305,7 @@ describe('history diff', () => {
   })
 })
 
-import { tableTab, toggleWrap, type TextEdit } from '../shared/markdown/inline'
+import { tableTab, toggleLines, toggleWrap, type TextEdit } from '../shared/markdown/inline'
 
 const applyEdit = (src: string, ed: TextEdit) => {
   const out = src.slice(0, ed.from) + ed.text + src.slice(ed.to)
@@ -335,5 +335,27 @@ describe('Tab in a table', () => {
     expect(applyEdit(t, tableTab(t, 28, false)!)).toBe('| a | bb |\n|---|----|\n| c | d |\n| []  |   |\n\nafter')
     expect(applyEdit(t, tableTab(t, 2, true)!)).toBe('| [a] | bb |\n|---|----|\n| c | d |\n\nafter')
     expect(tableTab(t, t.length - 1, false)).toBe(null)
+  })
+})
+
+describe('phone toolbar line actions', () => {
+  const at = (src: string, s: number, e: number, k: Parameters<typeof toggleLines>[3]) => applyEdit(src, toggleLines(src, s, e, k))
+  it('cycles headings and keeps the caret in the text', () => {
+    expect(at('a\ntitle\nb', 4, 4, 'heading')).toBe('a\n## ti[]tle\nb')
+    expect(at('a\n## title\nb', 7, 7, 'heading')).toBe('a\n### ti[]tle\nb')
+    expect(at('### title', 6, 6, 'heading')).toBe('ti[]tle')
+  })
+  it('toggles bullets, tasks and quotes on every selected line', () => {
+    expect(at('one\ntwo', 0, 7, 'list')).toBe('[- one\n- two]')
+    expect(at('- one\n- two', 0, 11, 'list')).toBe('[one\ntwo]')
+    expect(at('- one', 3, 3, 'task')).toBe('- [ ] o[]ne')
+    expect(at('- [x] one', 7, 7, 'task')).toBe('o[]ne')
+    expect(at('  1. one', 6, 6, 'list')).toBe('  - o[]ne')
+    expect(at('one\n\ntwo', 0, 8, 'quote')).toBe('[> one\n> \n> two]')
+    expect(at('> one', 2, 2, 'quote')).toBe('[]one')
+  })
+  it('indents and outdents', () => {
+    expect(at('- a\n- b', 6, 6, 'indent')).toBe('- a\n  - []b')
+    expect(at('- a\n  - b', 8, 8, 'outdent')).toBe('- a\n- []b')
   })
 })
