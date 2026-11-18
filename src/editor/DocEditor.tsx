@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Root } from 'mdast'
 import { parseMarkdown } from '../../shared/markdown/parse'
+import { useHighlighter } from '../highlight'
 import { makeContext, renderDocument, taskMarkerOffset, type SoftBreak, type WikiResolver } from '../../shared/markdown/render'
 import { blockIndexAt, computeEditUnit, computeRangeUnit, type EditUnit, type ListMode } from '../../shared/markdown/units'
 import { openLine, type BlockKind } from '../../shared/markdown/openLine'
 import { tableTab, toggleWrap } from '../../shared/markdown/inline'
+import { extractOutline, headingIds } from '../../shared/markdown/outline'
+import { copyText } from './copyButtons'
 import { toReact, type Run } from './vdom'
 import { SourceMap, caretRect, pointFromCoords } from './mapping'
 import { EditCtx, SourceEditor, isImeKey, textareaCaretY, type EditCtxValue } from './SourceEditor'
@@ -153,10 +156,11 @@ export function DocEditor(props: DocEditorProps) {
   const deltaRef = useRef(0)
   deltaRef.current = delta
 
+  const highlight = useHighlighter(source)
   // Render vnodes → React. Independent of the textarea text so typing is cheap.
   const unit = edit?.unit
   const { elements, runs } = useMemo(() => {
-    const ctx = makeContext(tree, src, resolveWiki, softBreak)
+    const ctx = makeContext(tree, src, resolveWiki, softBreak, highlight)
     if (unit && unit.kind !== 'empty') ctx.replace = { start: unit.start, end: unit.end, kind: unit.kind, target: unit.target }
     const runs: Run[] = []
     const slot = () => <SourceEditor />
@@ -165,7 +169,7 @@ export function DocEditor(props: DocEditorProps) {
     if (unit?.kind === 'empty') elements = [<SourceEditor key="empty" />]
     else if (!vnodes.length) elements = [<p key="ph" className="placeholder">{'空のページです。Enter またはダブルクリックで書き始めましょう。'}</p>]
     return { elements, runs }
-  }, [tree, src, unit, resolveWiki, softBreak])
+  }, [tree, src, unit, resolveWiki, softBreak, highlight])
 
   const map = useCallback(() => {
     const e = editRef.current
@@ -434,6 +438,16 @@ export function DocEditor(props: DocEditorProps) {
     })
   }, [liveTree, source])
   const [headButtons, setHeadButtons] = useState<{ x: number; y: number; h: number }[]>([])
+  /** `#見出し名` ids of every heading, by source offset. */
+  const headIds = useMemo(() => {
+    const items = extractOutline(liveTree)
+    const ids = headingIds(items)
+    return new Map(items.map((h, i) => [h.start, ids[i]]))
+  }, [liveTree])
+  const headIdsRef = useRef(headIds)
+  headIdsRef.current = headIds
+  /** Copy buttons: top-right corner of each code block. */
+  const [codeButtons, setCodeButtons] = useState<{ x: number; y: number }[]>([])
 
   // ------------------------------------------------------------ line numbers
 
@@ -529,10 +543,19 @@ export function DocEditor(props: DocEditorProps) {
         const last = rects[rects.length - 1] ?? el.getBoundingClientRect()
         const box = el.getBoundingClientRect()
         // A heading reaching the right edge: keep the button inside the page.
-        return { x: Math.min(last.right - root.getBoundingClientRect().left, root.clientWidth - 60), y: box.top - rootTop, h: box.height }
+        // Headings keep room on the right (CSS padding), so the buttons fit after the last line.
+        const line = rects.length ? last : box
+        return { x: last.right - root.getBoundingClientRect().left, y: line.top - rootTop, h: line.height }
       }),
     )
-  }, [source, runs, liveTree, listMode])
+    const rootLeft = root.getBoundingClientRect().left
+    setCodeButtons(
+      [...root.querySelectorAll('pre')].map((pre) => {
+        const b = pre.getBoundingClientRect()
+        return { x: b.right - rootLeft, y: b.top - rootTop }
+      }),
+    )
+  }, [source, runs, liveTree, listMode, readOnly])
 
   useLayoutEffect(() => {
     computeGutter()
@@ -578,7 +601,27 @@ export function DocEditor(props: DocEditorProps) {
   }, [gutter, selectLines])
   function openLineHash() {
     const m = /^#L(\d+)(?:-L(\d+))?$/.exec(location.hash)
-    if (m) selectLines(Number(m[1]), Number(m[2] ?? m[1]), { updateUrl: false, scroll: true })
+    if (m) return selectLines(Number(m[1]), Number(m[2] ?? m[1]), { updateUrl: false, scroll: true })
+    // #見出し名: scroll to that heading.
+    let id = ''
+    try {
+      id = decodeURIComponent(location.hash.slice(1))
+    } catch {
+      return
+    }
+    if (!id) return
+    for (const [at, hid] of headIdsRef.current) {
+      if (hid !== id) continue
+      rootRef.current?.querySelector(`[data-h="${at}"]`)?.scrollIntoView()
+      return
+    }
+  }
+  const copyHeadingLink = async (at: number, el: HTMLElement) => {
+    const id = headIdsRef.current.get(at)
+    if (!id) return
+    const hash = `#${encodeURIComponent(id)}`
+    history.replaceState(history.state, '', hash)
+    await copyText(location.origin + location.pathname + hash, el)
   }
   useEffect(() => {
     const h = () => {
@@ -1318,7 +1361,7 @@ export function DocEditor(props: DocEditorProps) {
     <EditCtx.Provider value={editCtx}>
       <div
         ref={rootRef}
-        className={`doc markdown-body ${edit ? 'is-editing' : 'is-viewing'} ${focused ? 'is-focused' : ''} ${softBreak === 'break' ? 'soft-breaks' : ''}`}
+        className={`doc markdown-body ${readOnly ? 'head-room-ro' : 'head-room'} ${edit ? 'is-editing' : 'is-viewing'} ${focused ? 'is-focused' : ''} ${softBreak === 'break' ? 'soft-breaks' : ''}`}
         tabIndex={0}
         role="document"
         aria-label="本文"
@@ -1358,13 +1401,12 @@ export function DocEditor(props: DocEditorProps) {
             ))}
           </div>
         )}
-        {!edit && !readOnly && headButtons.length === sections.length && (
+        {!edit && headButtons.length === sections.length && (
           <div className="head-edits" data-testid="head-edits">
             {sections.map((sec, i) => (
-              <button
-                key={sec.start}
+              <div key={sec.start} className="head-tools" style={{ left: headButtons[i].x + 6, top: headButtons[i].y, height: headButtons[i].h }}>
+              {!readOnly && <button
                 className="head-edit"
-                style={{ left: headButtons[i].x + 8, top: headButtons[i].y, height: headButtons[i].h }}
                 title="この見出しの節（次の同じレベルの見出しまで）を編集"
                 aria-label="この節を編集"
                 data-testid="head-edit"
@@ -1379,6 +1421,48 @@ export function DocEditor(props: DocEditorProps) {
                 }}
               >
                 <span>編集</span>
+              </button>}
+              <button
+                className="head-edit head-link"
+                title="この見出しへのリンクをコピー"
+                aria-label="この見出しへのリンクをコピー"
+                data-testid="head-link"
+                tabIndex={-1}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  copyHeadingLink(sec.start, e.currentTarget)
+                }}
+              >
+                <span>🔗</span>
+              </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {!edit && codeButtons.length > 0 && (
+          <div className="head-edits">
+            {codeButtons.map((c, i) => (
+              <button
+                key={i}
+                className="code-copy"
+                style={{ left: c.x, top: c.y }}
+                title="コードをコピー"
+                data-testid="code-copy"
+                tabIndex={-1}
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                }}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  copyText(rootRef.current?.querySelectorAll('pre')[i]?.textContent ?? '', e.currentTarget)
+                }}
+              >
+                <span>コピー</span>
               </button>
             ))}
           </div>

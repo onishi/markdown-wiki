@@ -9,6 +9,9 @@ export async function caretAt(page: Page, text: string, index: number, opts: { w
       const root = document.querySelector('[data-testid=doc]')!
       const spans = [...root.querySelectorAll(`${within ?? ''} span.r`)].filter((s) => s.textContent!.includes(text))
       const span = spans[nth ?? 0]
+      // A click outside the window would not land: bring the text into view first.
+      const sr = span.getBoundingClientRect()
+      if (sr.top < 60 || sr.bottom > innerHeight - 20) span.scrollIntoView({ block: 'center', behavior: 'instant' })
       const t = span.firstChild as Text
       const at = t.data.indexOf(text) + index
       const r = document.createRange()

@@ -75,6 +75,20 @@ kbd { font-family: var(--mono); font-size: 0.85em; border: 1px solid var(--borde
 .doc code { font-family: var(--mono); font-size: .88em; background: var(--code-bg); padding: .15em .35em; border-radius: 4px; }
 .doc pre { background: var(--code-bg); padding: 12px 14px; border-radius: 6px; overflow-x: auto; line-height: 1.5; margin: 0 0 1em; }
 .doc pre code { background: none; padding: 0; font-size: .88em; }
+.doc pre code { --hl-kw: #cf222e; --hl-str: #0a3069; --hl-com: #6e7781; --hl-num: #0550ae; --hl-fn: #8250df; --hl-var: #953800; --hl-type: #116329; }
+@media (prefers-color-scheme: dark) {
+  .doc pre code { --hl-kw: #ff7b72; --hl-str: #a5d6ff; --hl-com: #8b949e; --hl-num: #79c0ff; --hl-fn: #d2a8ff; --hl-var: #ffa657; --hl-type: #7ee787; }
+}
+.hljs-keyword, .hljs-selector-tag, .hljs-meta .hljs-keyword, .hljs-doctag, .hljs-template-tag, .hljs-type { color: var(--hl-kw); }
+.hljs-string, .hljs-regexp, .hljs-meta .hljs-string, .hljs-char.escape_ { color: var(--hl-str); }
+.hljs-comment, .hljs-code, .hljs-formula, .hljs-quote { color: var(--hl-com); font-style: italic; }
+.hljs-number, .hljs-literal, .hljs-built_in, .hljs-symbol, .hljs-attr, .hljs-attribute, .hljs-selector-attr, .hljs-selector-class, .hljs-selector-id, .hljs-meta, .hljs-link { color: var(--hl-num); }
+.hljs-title, .hljs-title.function_, .hljs-title.class_, .hljs-section { color: var(--hl-fn); }
+.hljs-variable, .hljs-template-variable, .hljs-params, .hljs-property, .hljs-subst { color: var(--hl-var); }
+.hljs-name, .hljs-selector-pseudo, .hljs-bullet, .hljs-addition { color: var(--hl-type); }
+.hljs-deletion { color: var(--hl-kw); }
+.hljs-section, .hljs-strong { font-weight: 600; }
+.hljs-emphasis { font-style: italic; }
 .doc table { border-collapse: collapse; margin: 0 0 1em; display: block; overflow-x: auto; }
 .doc th, .doc td { border: 1px solid var(--border); padding: 5px 12px; }
 .doc th { background: var(--bg-side); font-weight: 600; }
@@ -621,7 +635,10 @@ body:has(.touch-bar) .page, body:has(.sel-bar) .page { padding-bottom: 140px; }
 
 /* ------------------------------------------------------------------ 編集 buttons by the title and headings */
 .head-edits { position: absolute; inset: 0 auto auto 0; width: 0; height: 0; }
-.head-edit { position: absolute; display: inline-flex; align-items: center; border: 0; background: none; padding: 0 4px; font: inherit; font-size: 12px; font-weight: normal; color: var(--fg-muted); cursor: pointer; opacity: .55; white-space: nowrap; letter-spacing: 0; }
+.head-tools { position: absolute; display: flex; align-items: center; gap: 2px; }
+.doc.head-room > :is(h1, h2, h3, h4, h5, h6) { padding-right: 84px; }
+.doc.head-room-ro > :is(h1, h2, h3, h4, h5, h6) { padding-right: 32px; }
+.head-edit { position: relative; display: inline-flex; align-items: center; border: 0; background: none; padding: 0 4px; font: inherit; font-size: 12px; font-weight: normal; color: var(--fg-muted); cursor: pointer; opacity: .55; white-space: nowrap; letter-spacing: 0; }
 .head-edit span { border: 1px solid var(--border); border-radius: 5px; padding: 1px 7px; line-height: 1.5; background: var(--bg); }
 .head-edit:hover { opacity: 1; color: var(--accent); }
 .head-edit:hover span { border-color: var(--accent); }
@@ -629,5 +646,22 @@ body:has(.touch-bar) .page, body:has(.sel-bar) .page { padding-bottom: 140px; }
 .title-row { display: flex; align-items: center; gap: 10px; margin: 12px 0 20px; }
 .title-row .page-title { margin: 0; }
 .head-edit.title-edit { position: static; flex: none; }
+.head-link { padding: 0 2px; }
+.head-link span { border-color: transparent; background: none; padding: 1px 2px; }
 .title-row:hover .title-edit { opacity: .8; }
-@media print { .head-edit { display: none; } }
+/* Copy button on code blocks: editor layer (absolute, by the block's right edge) and public pages (inside .code-wrap). */
+.code-copy { position: absolute; transform: translate(calc(-100% - 6px), 6px); border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--fg-muted); font: inherit; font-size: 12px; line-height: 1.5; padding: 1px 8px; cursor: pointer; opacity: .6; white-space: nowrap; }
+.code-copy:hover { opacity: 1; color: var(--accent); border-color: var(--accent); }
+.code-copy[data-state] > * { display: none; }
+.code-copy[data-state=ok]::after { content: 'コピーしました'; }
+.code-copy[data-state=ng]::after { content: 'コピーできません'; }
+.head-link[data-state] span { display: none; }
+.head-link[data-state=ok]::after { content: 'リンクをコピーしました'; font-size: 12px; color: var(--accent); }
+.head-link[data-state=ng]::after { content: 'コピーできません'; font-size: 12px; }
+.code-wrap { position: relative; }
+.code-wrap .code-copy { top: 0; left: 100%; }
+.doc h1, .doc h2, .doc h3, .doc h4, .doc h5, .doc h6 { scroll-margin-top: 64px; }
+.head-anchor { margin-left: 8px; font-size: .6em; text-decoration: none; opacity: 0; vertical-align: middle; }
+.doc h1:hover .head-anchor, .doc h2:hover .head-anchor, .doc h3:hover .head-anchor, .doc h4:hover .head-anchor, .doc h5:hover .head-anchor, .doc h6:hover .head-anchor, .head-anchor:focus { opacity: .7; }
+@media (hover: none) { .head-anchor { opacity: .5; } }
+@media print { .head-edit, .code-copy, .head-anchor { display: none; } }

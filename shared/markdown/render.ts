@@ -50,7 +50,13 @@ export interface RenderContext {
    *  - 'join'  GFM, but no space is inserted between two CJK characters
    */
   softBreak?: SoftBreak
+  /** Syntax highlighter for fenced code with a language (null: unknown language). */
+  highlight?: Highlighter
 }
+
+/** Highlighted code: plain strings and classed spans whose text concatenates to the input. */
+export type HlNode = string | { cls: string; children: HlNode[] }
+export type Highlighter = (code: string, lang: string) => HlNode[] | null
 
 export type SoftBreak = 'gfm' | 'break' | 'join'
 
@@ -74,8 +80,8 @@ export function collectDefinitions(tree: Root): Map<string, Definition> {
 
 export const defaultWikiResolver: WikiResolver = (t) => ({ href: `#wiki:${encodeURIComponent(t)}`, exists: true })
 
-export function makeContext(tree: Root, src: string, resolveWiki: WikiResolver = defaultWikiResolver, softBreak: SoftBreak = 'gfm'): RenderContext {
-  return { src, resolveWiki, definitions: collectDefinitions(tree), softBreak }
+export function makeContext(tree: Root, src: string, resolveWiki: WikiResolver = defaultWikiResolver, softBreak: SoftBreak = 'gfm', highlight?: Highlighter): RenderContext {
+  return { src, resolveWiki, definitions: collectDefinitions(tree), softBreak, highlight }
 }
 
 /** Render one top-level block (or any block). */
@@ -308,9 +314,36 @@ function renderCode(node: Code, ctx: RenderContext): VNode {
     ce = closing ? Math.max(cs, lastLs) : e
   }
   const t = textVNode(node.value, src, cs, ce, true)
-  const kids: VNode[] = t.text ? [t] : [sentinel(s)]
+  const kids: VNode[] = t.text ? highlighted(t, node.lang, ctx.highlight) : [sentinel(s)]
   const attrs = node.lang ? { class: `language-${node.lang.replace(/[^\w-]/g, '')}` } : undefined
   return el('pre', [el('code', kids, attrs)])
+}
+
+/** Split a code text vnode into classed spans; each piece keeps its source offsets. */
+function highlighted(t: VText, lang: string | null | undefined, hl: Highlighter | undefined): VNode[] {
+  if (!lang || !hl) return [t]
+  let tree: HlNode[] | null = null
+  try {
+    tree = hl(t.text, lang)
+  } catch {
+    tree = null
+  }
+  if (!tree) return [t]
+  const flat = (ns: HlNode[]): string => ns.map((n) => (typeof n === 'string' ? n : flat(n.children))).join('')
+  if (flat(tree) !== t.text) return [t]
+  let pos = 0
+  const conv = (ns: HlNode[]): VNode[] =>
+    ns.flatMap((n): VNode[] => {
+      if (typeof n === 'string') {
+        if (!n) return []
+        const v: VText = { k: 'text', text: n, offs: t.offs.slice(pos, pos + n.length + 1) }
+        pos += n.length
+        return [v]
+      }
+      const kids = conv(n.children)
+      return kids.length ? [el('span', kids, { class: n.cls })] : []
+    })
+  return conv(tree)
 }
 
 function renderTable(node: Table, ctx: RenderContext): VNode {

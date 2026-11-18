@@ -30,3 +30,17 @@ function textOf(n: AnyNode): string {
   if ('children' in n) return (n.children as AnyNode[]).map(textOf).join('')
   return ''
 }
+
+/**
+ * URL fragment ids for headings (`#見出し名`): the heading text with whitespace runs
+ * turned into `-`; repeated names get `-2`, `-3` … in document order.
+ */
+export function headingIds(items: { text: string }[]): string[] {
+  const seen = new Map<string, number>()
+  return items.map((h) => {
+    const base = h.text.trim().replace(/\s+/g, '-') || 'section'
+    const n = (seen.get(base) ?? 0) + 1
+    seen.set(base, n)
+    return n === 1 ? base : `${base}-${n}`
+  })
+}
