@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parseMarkdown, walk, type WikiLink } from '../shared/markdown/parse'
-import { renderDocument, makeContext, toHtmlString, type VNode, type VText } from '../shared/markdown/render'
+import { renderDocument, makeContext, toHtmlString, type VNode, type VText, type HlNode, type Highlighter } from '../shared/markdown/render'
 import { computeEditUnit } from '../shared/markdown/units'
 import { sliceMarkdown } from '../shared/markdown/copy'
 import { rewriteWikiLinks } from '../shared/markdown/wikilinks'
@@ -357,5 +357,31 @@ describe('phone toolbar line actions', () => {
   it('indents and outdents', () => {
     expect(at('- a\n- b', 6, 6, 'indent')).toBe('- a\n  - []b')
     expect(at('- a\n  - b', 8, 8, 'outdent')).toBe('- a\n- []b')
+  })
+})
+
+describe('syntax highlighting', () => {
+  it('splits code into classed spans that keep source offsets', async () => {
+    const { createLowlight, common } = await import('lowlight')
+    const low = createLowlight(common)
+    type H = { type: string; value?: string; properties?: { className?: string[] }; children?: H[] }
+    const conv = (ns: H[]): HlNode[] =>
+      ns.flatMap((n): HlNode[] => (n.type === 'text' ? [n.value!] : [{ cls: (n.properties?.className ?? []).join(' '), children: conv(n.children ?? []) }]))
+    const hl: Highlighter = (code, lang) => (low.registered(lang) ? conv(low.highlight(lang, code).children as H[]) : null)
+    const src = 'x\n\n```perl\nmy $x = "hi"; # c\n```\n'
+    const tree = parseMarkdown(src)
+    const vn = renderDocument(tree, makeContext(tree, src, undefined, 'gfm', hl))
+    const html = toHtmlString(vn)
+    expect(html).toContain('<span class="hljs-keyword">my</span>')
+    expect(html).toContain('<span class="hljs-comment"># c</span>')
+    // Every text piece maps back to its own characters in the source.
+    const texts: { text: string; offs: number[] }[] = []
+    const walkV = (ns: VNode[]) => ns.forEach((n) => (n.k === 'text' ? texts.push(n) : n.k === 'el' && walkV(n.children)))
+    walkV(vn)
+    for (const t of texts) for (let i = 0; i < t.text.length; i++) expect(src[t.offs[i]]).toBe(t.text[i])
+    // Unknown language: plain text.
+    const src2 = '```nosuchlang\na b\n```\n'
+    const t2 = parseMarkdown(src2)
+    expect(toHtmlString(renderDocument(t2, makeContext(t2, src2, undefined, 'gfm', hl)))).not.toContain('hljs')
   })
 })

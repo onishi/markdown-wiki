@@ -137,7 +137,7 @@ test.describe('edit units', () => {
     expect((await textarea(page)).value).toBe('- 項目 A\n  - 子項目 A-1\n  - [ ] タスク\n- 項目 B')
     await page.keyboard.press('Escape')
 
-    await caretAt(page, 'const a', 3)
+    await caretAt(page, 'const', 3) // `const` is one highlighted token
     await page.keyboard.press('Enter')
     const code = await textarea(page)
     expect(code.value).toBe('```js\nconst a = 1 // [[リンクにならない]]\n```')

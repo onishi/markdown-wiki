@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { pageUrl } from '../api'
 import { parseMarkdown } from '../../shared/markdown/parse'
+import { useHighlighter } from '../highlight'
 import { makeContext, renderDocument, type VNode } from '../../shared/markdown/render'
 import { normalizePageName } from '../../shared/pageName'
 import { toReact } from '../editor/vdom'
@@ -43,14 +44,15 @@ export function PublicPage({ fallback }: { fallback: React.ReactNode }) {
     if (data && data !== 'missing') document.title = `${data.page.name.split('/').pop()} - ${data.wiki.name}`
   }, [data])
 
+  const highlight = useHighlighter(data && data !== 'missing' ? data.page.content : '')
   const doc = useMemo(() => {
     if (!data || data === 'missing') return null
     const published = new Set(data.published)
     const src = data.page.content
     const tree = parseMarkdown(src)
-    const ctx = makeContext(tree, src, (t) => ({ href: pageUrl(data.wiki.slug, t), exists: true }), 'break')
+    const ctx = makeContext(tree, src, (t) => ({ href: pageUrl(data.wiki.slug, t), exists: true }), 'break', highlight)
     return toReact(privateLinksAsText(renderDocument(tree, ctx), published), [], () => null)
-  }, [data])
+  }, [data, highlight])
 
   if (data === null) return <div className="center-msg">読み込み中…</div>
   if (data === 'missing') return <>{fallback}</>

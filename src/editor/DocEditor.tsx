@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Root } from 'mdast'
 import { parseMarkdown } from '../../shared/markdown/parse'
+import { useHighlighter } from '../highlight'
 import { makeContext, renderDocument, taskMarkerOffset, type SoftBreak, type WikiResolver } from '../../shared/markdown/render'
 import { blockIndexAt, computeEditUnit, computeRangeUnit, type EditUnit, type ListMode } from '../../shared/markdown/units'
 import { openLine, type BlockKind } from '../../shared/markdown/openLine'
@@ -153,10 +154,11 @@ export function DocEditor(props: DocEditorProps) {
   const deltaRef = useRef(0)
   deltaRef.current = delta
 
+  const highlight = useHighlighter(source)
   // Render vnodes → React. Independent of the textarea text so typing is cheap.
   const unit = edit?.unit
   const { elements, runs } = useMemo(() => {
-    const ctx = makeContext(tree, src, resolveWiki, softBreak)
+    const ctx = makeContext(tree, src, resolveWiki, softBreak, highlight)
     if (unit && unit.kind !== 'empty') ctx.replace = { start: unit.start, end: unit.end, kind: unit.kind, target: unit.target }
     const runs: Run[] = []
     const slot = () => <SourceEditor />
@@ -165,7 +167,7 @@ export function DocEditor(props: DocEditorProps) {
     if (unit?.kind === 'empty') elements = [<SourceEditor key="empty" />]
     else if (!vnodes.length) elements = [<p key="ph" className="placeholder">{'空のページです。Enter またはダブルクリックで書き始めましょう。'}</p>]
     return { elements, runs }
-  }, [tree, src, unit, resolveWiki, softBreak])
+  }, [tree, src, unit, resolveWiki, softBreak, highlight])
 
   const map = useCallback(() => {
     const e = editRef.current
