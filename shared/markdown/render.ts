@@ -42,7 +42,7 @@ export interface RenderContext {
   resolveWiki: WikiResolver
   definitions: Map<string, Definition>
   /** Edit-unit replacement: a block whose full-line range equals this is replaced by a slot. */
-  replace?: { start: number; end: number; kind: 'block' | 'lines' | 'item' | 'range'; target: number }
+  replace?: { start: number; end: number; kind: 'block' | 'lines' | 'item' | 'range' | 'insert'; target: number }
   /**
    * Soft line breaks (newline inside a paragraph):
    *  - 'gfm'   (spec) rendered as whitespace
@@ -92,6 +92,21 @@ export function renderBlock(node: Nodes, ctx: RenderContext): VNode[] {
 export function renderDocument(tree: Root, ctx: RenderContext): VNode[] {
   const r = ctx.replace
   if (r?.kind === 'range') return renderWithRange(tree, ctx, r)
+  if (r?.kind === 'insert') {
+    // A new block between two blocks: the slot goes before the first block after it.
+    const inner: RenderContext = { ...ctx, replace: undefined }
+    const out: VNode[] = []
+    let done = false
+    for (const c of tree.children) {
+      if (!done && start(c) >= r.start) {
+        out.push({ k: 'slot' })
+        done = true
+      }
+      out.push(...renderBlock(c, inner))
+    }
+    if (!done) out.push({ k: 'slot' })
+    return out
+  }
   return tree.children.flatMap((c) => renderBlock(c, ctx))
 }
 

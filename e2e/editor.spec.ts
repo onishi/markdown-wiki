@@ -81,25 +81,40 @@ test.describe('cursor ↔ source mapping', () => {
     expect((await focusInfo(page)).text).toContain('Markdown Wiki')
   })
 
-  test('o / O open a new line: new paragraph, continued list item', async ({ page }) => {
+  test('o / O start a new, empty block below / above (the current block is not opened)', async ({ page }) => {
+    const ta = page.locator('[data-testid=src-editor] textarea')
     await caretAt(page, '太字の文章', 1)
     await page.keyboard.press('o')
+    await expect(ta).toHaveValue('') // only the new block
+    await expect(page.locator('[data-testid=doc] p strong', { hasText: '太字の文章' })).toBeVisible() // still rendered
     await page.keyboard.type('新しい段落')
     await page.keyboard.press('Escape')
     expect(await source(page)).toContain('~~取り消し~~ があります。\n\n新しい段落\n\n> 引用の一行目')
     await expect(page.locator('[data-testid=doc] > p', { hasText: '新しい段落' })).toHaveCount(1)
 
+    // In a list: a new block after the whole list.
     await caretAt(page, '子項目 A-1', 1)
     await page.keyboard.press('o')
-    await page.keyboard.type('追加の子項目')
+    await expect(ta).toHaveValue('')
+    await page.keyboard.type('リストの後')
     await page.keyboard.press('Escape')
-    expect(await source(page)).toContain('  - 子項目 A-1\n  - 追加の子項目\n  - [ ] タスク')
+    expect(await source(page)).toContain('- 項目 B\n\nリストの後\n\n## 表')
 
     await caretAt(page, 'Markdown Wiki', 0)
     await page.keyboard.press('Shift+O')
+    await expect(ta).toHaveValue('')
     await page.keyboard.type('先頭の段落')
     await page.keyboard.press('Escape')
     expect((await source(page))!.startsWith('先頭の段落\n\n# Markdown Wiki')).toBe(true)
+
+    // Left empty: nothing is added.
+    const before = await source(page)
+    await caretAt(page, '引用の一行目', 1)
+    await page.keyboard.press('o')
+    await page.keyboard.press('Escape')
+    expect(await source(page)).toBe(before)
+    await page.keyboard.press('Meta+z') // and nothing to undo from it
+    expect(await source(page)).not.toBe(before)
   })
 
   test('“＋ 書き足す” starts a new paragraph at the end', async ({ page }) => {
