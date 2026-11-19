@@ -761,23 +761,26 @@ test.describe('keys without clicking first', () => {
 })
 
 test.describe('Shift+Enter', () => {
-  test('edits the whole block under the caret', async ({ page }) => {
+  test('edits the section under the caret, from its heading', async ({ page }) => {
     const ta = page.locator('[data-testid=src-editor] textarea')
-    // A two-line paragraph: Enter opens one line, Shift+Enter the whole paragraph.
-    await caretAt(page, '同じ段落', 1)
+    // In the code under 「### JavaScript」: from that (nearest) heading, up to 「## リンク」.
+    await caretAt(page, 'const', 2)
     await page.keyboard.press('Shift+Enter')
-    await expect(ta).toHaveValue('これは **太字の文章** と [リンクのテキスト](https://example.com) を含む段落です。\n同じ段落の二行目には *強調* と `inline code` と ~~取り消し~~ があります。')
+    await expect(ta).toHaveValue('### JavaScript\n\n```js\nconst a = 1 // [[リンクにならない]]\n```')
     await page.keyboard.type('!')
-    await expect(ta).toHaveValue(/\n同!じ段落/) // the caret stays where it was
+    await expect(ta).toHaveValue(/\nco!nst a/) // the caret stays where it was
     await page.keyboard.press('Escape')
 
-    // Right after opening the page too (no click).
-    await page.reload()
-    await page.locator('.doc h1').waitFor()
-    await page.evaluate(() => scrollTo(0, 0))
-    await page.keyboard.press('j')
+    // On the 「## コード」 heading: its sub-section 「### JavaScript」 comes along.
+    await caretAt(page, 'コード', 1, { within: 'h2' })
     await page.keyboard.press('Shift+Enter')
-    await expect(ta).toHaveValue(/^これは[\s\S]*があります。$/)
+    await expect(ta).toHaveValue(/^## コード\n\n### JavaScript\n[\s\S]*```$/)
+    await page.keyboard.press('Escape')
+
+    // Before the first sub-heading: from the page's first heading.
+    await caretAt(page, '同じ段落', 1)
+    await page.keyboard.press('Shift+Enter')
+    await expect(ta).toHaveValue(/^# Markdown Wiki プレイグラウンド\n[\s\S]*も自動リンク。$/) // the h1 section is the whole page
     await page.keyboard.press('Escape')
   })
 })
