@@ -759,3 +759,25 @@ test.describe('keys without clicking first', () => {
     await expect(page.getByTestId('caret')).toHaveCount(0)
   })
 })
+
+test.describe('Shift+Enter', () => {
+  test('edits the whole block under the caret', async ({ page }) => {
+    const ta = page.locator('[data-testid=src-editor] textarea')
+    // A two-line paragraph: Enter opens one line, Shift+Enter the whole paragraph.
+    await caretAt(page, '同じ段落', 1)
+    await page.keyboard.press('Shift+Enter')
+    await expect(ta).toHaveValue('これは **太字の文章** と [リンクのテキスト](https://example.com) を含む段落です。\n同じ段落の二行目には *強調* と `inline code` と ~~取り消し~~ があります。')
+    await page.keyboard.type('!')
+    await expect(ta).toHaveValue(/\n同!じ段落/) // the caret stays where it was
+    await page.keyboard.press('Escape')
+
+    // Right after opening the page too (no click).
+    await page.reload()
+    await page.locator('.doc h1').waitFor()
+    await page.evaluate(() => scrollTo(0, 0))
+    await page.keyboard.press('j')
+    await page.keyboard.press('Shift+Enter')
+    await expect(ta).toHaveValue(/^これは[\s\S]*があります。$/)
+    await page.keyboard.press('Escape')
+  })
+})
