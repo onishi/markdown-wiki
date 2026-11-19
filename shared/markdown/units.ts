@@ -16,8 +16,12 @@ export type ListMode = 'list' | 'item'
 export interface EditUnit {
   start: number
   end: number
-  kind: 'block' | 'lines' | 'item' | 'range' | 'empty'
-  /** For 'item': start offset of the list item being edited. */
+  kind: 'block' | 'lines' | 'item' | 'range' | 'empty' | 'insert'
+  /**
+   * For 'item': start offset of the list item being edited.
+   * For 'insert' (a new block between blocks, start === end): where the blank-line
+   * separator added for it begins (removed again when the new block stays empty).
+   */
   target: number
   blockIndex: number
 }

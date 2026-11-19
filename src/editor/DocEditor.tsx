@@ -3,7 +3,7 @@ import type { Root } from 'mdast'
 import { parseMarkdown } from '../../shared/markdown/parse'
 import { useHighlighter } from '../highlight'
 import { makeContext, renderDocument, taskMarkerOffset, type SoftBreak, type WikiResolver } from '../../shared/markdown/render'
-import { blockIndexAt, computeEditUnit, computeRangeUnit, type EditUnit, type ListMode } from '../../shared/markdown/units'
+import { blockIndexAt, computeEditUnit, computeRangeUnit, lineEnd as lineEndOf, lineStart as lineStartOf, type EditUnit, type ListMode } from '../../shared/markdown/units'
 import { openLine, type BlockKind } from '../../shared/markdown/openLine'
 import { tableTab, toggleWrap } from '../../shared/markdown/inline'
 import { extractOutline, headingIds } from '../../shared/markdown/outline'
@@ -67,6 +67,8 @@ interface EditState {
   initialCaret: number
   /** When editing a selected range: the other end of the selection inside the text. */
   initialSelEnd?: number
+  /** The source before editing began, when opening it changed the source (o / O). */
+  before?: string
 }
 
 interface Menu {
@@ -261,6 +263,21 @@ export function DocEditor(props: DocEditorProps) {
       if (editRef.current) return
       const sel = selectionInDoc()
       const r = sel ? caretRect(sel.focusNode!, sel.focusOffset) : null
+      // o / O: a new, empty block below / above the caret's block; the block itself is not opened.
+      if (open && liveTree.children.length && rangeEnd === undefined) {
+        const block = liveTree.children[blockIndexAt(liveTree, offset)]
+        const p = open === 'below' ? lineEndOf(source, block.position!.end.offset!) : lineStartOf(source, block.position!.start.offset!)
+        const src2 = source.slice(0, p) + '\n\n' + source.slice(p)
+        const at2 = open === 'below' ? p + 2 : p
+        const u: EditUnit = { start: at2, end: at2, kind: 'insert', target: p, blockIndex: -1 }
+        pending.current = { anchorY: r?.top }
+        setMenu(null)
+        const next: EditState = { unit: u, frozenSrc: src2, frozenTree: parseMarkdown(src2), text: '', initialCaret: 0, before: source }
+        editRef.current = next
+        setEdit(next)
+        emit(src2)
+        return
+      }
       let at = offset
       let kind: BlockKind = 'other'
       if (open && liveTree.children.length) {
@@ -297,11 +314,17 @@ export function DocEditor(props: DocEditorProps) {
       const e = editRef.current
       if (!e) return
       const ta = taRef.current
-      const composed = e.frozenSrc.slice(0, e.unit.start) + e.text + e.frozenSrc.slice(e.unit.end)
-      const c = caretAt ?? e.unit.start + (ta ? ta.selectionEnd : 0)
+      let composed = e.frozenSrc.slice(0, e.unit.start) + e.text + e.frozenSrc.slice(e.unit.end)
+      let c = caretAt ?? e.unit.start + (ta ? ta.selectionEnd : 0)
+      if (e.unit.kind === 'insert' && !e.text.trim()) {
+        // The new block stayed empty: nothing is added.
+        composed = e.before ?? e.frozenSrc
+        c = caretAt ?? Math.min(e.unit.target, composed.length)
+      }
       pending.current = { caret: c, anchorY: caretAt === undefined && ta ? textareaCaretY(ta) : undefined, focusDoc: true }
       setEdit(null)
-      if (composed !== e.frozenSrc) record(e.frozenSrc)
+      const base = e.before ?? e.frozenSrc
+      if (composed !== base) record(base)
       if (composed !== source) emit(composed)
     },
     [emit, source],
@@ -396,7 +419,7 @@ export function DocEditor(props: DocEditorProps) {
           // The change reaches outside the block: finish editing, then replace.
           editRef.current = null
           setEdit(null)
-          if (source !== e.frozenSrc) record(e.frozenSrc)
+          if (source !== (e.before ?? e.frozenSrc)) record(e.before ?? e.frozenSrc)
         }
         record(source)
         pending.current = { caret: i, focusDoc: true, reveal: true }
