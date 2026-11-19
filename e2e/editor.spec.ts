@@ -721,3 +721,26 @@ test('outline: at the bottom of the page the last heading on screen is current',
   await page.mouse.wheel(0, -5000)
   await expect(page.getByTestId('outline').locator('button.active')).toHaveText('Markdown Wiki プレイグラウンド')
 })
+
+test.describe('keys without clicking first', () => {
+  test('right after opening, hjkl / Enter start from the first line', async ({ page }) => {
+    await page.keyboard.press('j') // line 1 → line 2
+    await expect(page.getByTestId('caret')).toBeVisible()
+    await page.keyboard.press('Enter')
+    expect((await textarea(page)).value).toBe('これは **太字の文章** と [リンクのテキスト](https://example.com) を含む段落です。')
+    await page.keyboard.press('Escape')
+
+    await page.reload()
+    await page.locator('.doc h1').waitFor()
+    await page.evaluate(() => scrollTo(0, 0)) // the reload may restore the scroll position
+    await page.keyboard.press('Enter') // edits the first line
+    expect((await textarea(page)).value).toBe('# Markdown Wiki プレイグラウンド')
+    await page.keyboard.press('Escape')
+
+    // Typing into a field is left alone.
+    await page.reload()
+    await page.getByTestId('list-mode').focus()
+    await page.keyboard.press('j')
+    await expect(page.getByTestId('caret')).toHaveCount(0)
+  })
+})

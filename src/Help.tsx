@@ -84,6 +84,7 @@ export function Help() {
         <ul>
           <li>
             直したいところを<strong>ダブルクリック</strong>（またはカーソルを置いて <kbd>Enter</kbd>）すると、その段落・リスト・表などのブロックだけが Markdown の編集欄になります。
+            ページを開いたらクリックしなくても、<kbd>↑</kbd><kbd>↓</kbd> や <kbd>j</kbd><kbd>k</kbd> を押すと画面のいちばん上の行からカーソルが動きます。
           </li>
           <li>
             <kbd>Esc</kbd> で表示に戻ります。変更はすぐに自動保存されます（ページ右上に「保存済み」と出ます）。
