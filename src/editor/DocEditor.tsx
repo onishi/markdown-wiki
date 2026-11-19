@@ -878,7 +878,7 @@ export function DocEditor(props: DocEditorProps) {
     const mod = e.metaKey || e.ctrlKey
     /** App shortcuts (select all, …): Cmd on macOS, Ctrl elsewhere. */
     const cmd = isMac ? e.metaKey : e.ctrlKey
-    // Shift+Enter: the whole block(s) under the caret / selection (a paragraph with all its lines, the whole list …).
+    // Shift+Enter: the section under the caret, from its heading (like the heading's 編集 button).
     if (e.key === 'Enter' && e.shiftKey && !e.altKey && !mod) {
       e.preventDefault()
       if (!liveTree.children.length) return startEdit(0)
@@ -886,11 +886,15 @@ export function DocEditor(props: DocEditorProps) {
       const off = focusOffset()
       if (!range && off == null) return
       const [a, b] = range ?? [off!, off!]
-      const first = liveTree.children[blockIndexAt(liveTree, a)]
-      const last = liveTree.children[blockIndexAt(liveTree, b)]
-      const s0 = first.position!.start.offset!
-      const e0 = Math.max(s0 + 1, last.position!.end.offset!)
-      startEdit(s0, undefined, e0, Math.min(Math.max(off ?? a, s0), e0))
+      const sec = [...sections].reverse().find((x) => x.start <= a)
+      // Before the first heading: from the top of the page to that heading.
+      const firstHead = sections[0]?.start ?? source.length
+      let s0 = sec ? sec.start : 0
+      let e0 = sec ? sec.end : firstHead
+      while (e0 > s0 && /\s/.test(source[e0 - 1])) e0--
+      e0 = Math.max(e0, b)
+      if (!sec) s0 = Math.min(s0, a)
+      editSection(s0, Math.max(s0 + 1, e0), Math.min(Math.max(off ?? a, s0), e0))
       return
     }
     if (e.key === 'Enter' && !e.altKey && !e.shiftKey) {
