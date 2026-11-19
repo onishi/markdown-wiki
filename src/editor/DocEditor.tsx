@@ -993,6 +993,37 @@ export function DocEditor(props: DocEditorProps) {
     applyMove(m, e.shiftKey)
   }
 
+  /**
+   * Keys pressed while nothing in particular has focus (the page was just opened, or a
+   * sidebar link was clicked): the document takes them, starting from its first line on
+   * screen, so hjkl / arrows / Enter work without clicking into the text first.
+   */
+  const onKeyDownRef = useRef(onKeyDown)
+  onKeyDownRef.current = onKeyDown
+  useEffect(() => {
+    const KEYS = new Set(['h', 'j', 'k', 'l', 'i', 'a', 'o', 'O', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'])
+    const h = (e: KeyboardEvent) => {
+      const root = rootRef.current
+      if (!root || e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey || editRef.current) return
+      if (!KEYS.has(e.key) || (e.shiftKey && e.key !== 'O')) return
+      const a = document.activeElement
+      if (a && a !== document.body) {
+        // Only from a link / button outside the document (not from fields, menus, dialogs).
+        if (root.contains(a) || !a.matches('a, button') || a.closest('.modal-back, [role=menu], [role=dialog]')) return
+        if (e.key === 'Enter') return // Enter belongs to the focused link / button
+      }
+      if (document.querySelector('.modal-back')) return
+      const first = firstVisibleText(root)
+      if (!first) return
+      e.preventDefault()
+      root.focus({ preventScroll: true })
+      document.getSelection()?.setBaseAndExtent(first, 0, first, 0)
+      onKeyDownRef.current({ ...e, key: e.key, shiftKey: e.shiftKey, metaKey: false, ctrlKey: false, altKey: false, target: root, nativeEvent: e, preventDefault: () => {} } as unknown as React.KeyboardEvent<HTMLDivElement>)
+    }
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [])
+
   const undoRedo = (redo: boolean) => {
     if (readOnly) return
     const from = redo ? redoStack.current : undoStack.current
@@ -1622,4 +1653,16 @@ export function lineHash(a: number, b: number) {
 function linkInfo(a: HTMLAnchorElement): Menu['link'] {
   const wiki = a.dataset.wiki
   return { href: a.getAttribute('href') ?? '', wiki, missing: wiki ? a.classList.contains('missing') : false }
+}
+
+/** The first rendered text of the document that is on screen (else the very first one). */
+function firstVisibleText(root: HTMLElement): Text | null {
+  const spans = [...root.querySelectorAll('span.r')]
+  const top = 56 // below the sticky header
+  for (const sp of spans) {
+    if (sp.closest('.src-editor')) continue
+    const r = sp.getBoundingClientRect()
+    if (r.bottom > top && r.height > 0) return (sp.firstChild as Text) ?? null
+  }
+  return (spans[0]?.firstChild as Text) ?? null
 }
