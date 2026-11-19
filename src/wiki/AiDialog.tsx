@@ -218,6 +218,7 @@ export function AiDialog({
   selection,
   onApply,
   onClose,
+  autoStart,
 }: {
   wikiId: string;
   pageId: string;
@@ -228,6 +229,8 @@ export function AiDialog({
   selection: { start: number; end: number; editing?: boolean } | null;
   onApply: (next: string) => void;
   onClose: () => void;
+  /** Start right away with the defaults (お任せ), without the form first. */
+  autoStart?: boolean;
 }) {
   const [scope, setScope] = useState<"selection" | "page">(
     selection ? "selection" : "page",
@@ -337,6 +340,12 @@ export function AiDialog({
       });
     }
   };
+
+  // (Re-run after a remount: unmounting aborts the request in flight.)
+  useEffect(() => {
+    if (autoStart) run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart]);
 
   const links = phase.kind === "review" ? phase.links : undefined;
   /** What can be adopted: diff hunks, or for linking tasks each link (by index). */

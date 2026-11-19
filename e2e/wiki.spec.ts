@@ -996,3 +996,28 @@ test('after opening a page from the sidebar, j moves the caret without clicking'
   await page.keyboard.press('Escape')
   await page.context().close()
 })
+
+test('empty page: 「AI にお任せで書く」 drafts it from the title in one click', async ({ browser }) => {
+  const page = await login(browser, uniq('aidraft'))
+  const wid = await createWiki(page, 'お任せ wiki')
+  await page.goto(`/w/${wid}/settings`)
+  await page.getByTestId('ai-enabled').click()
+  await expect(page.getByTestId('ai-enabled')).toBeChecked()
+  await newPage(page, '空き')
+  await page.getByTestId('ai-draft').click()
+  await expect(page.getByTestId('ai-summary')).toBeVisible() // started without pressing run
+  await page.getByTestId('ai-apply').click()
+  await expect(page.getByTestId('doc')).toContainText('AI 追記')
+  await saved(page)
+  await expect(page.getByTestId('ai-draft')).toHaveCount(0) // not empty any more
+  await page.context().close()
+})
+
+test('「AI にお任せで書く」 is not offered when AI is off for the wiki', async ({ browser }) => {
+  const page = await login(browser, uniq('aidraft-off'))
+  await createWiki(page, 'AI なし wiki')
+  await newPage(page, '空き')
+  await expect(page.getByTestId('doc')).toContainText('空のページです')
+  await expect(page.getByTestId('ai-draft')).toHaveCount(0)
+  await page.context().close()
+})
