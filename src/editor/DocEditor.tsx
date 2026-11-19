@@ -36,6 +36,8 @@ export interface DocEditorProps {
   onUploadImage?: (file: File) => Promise<{ url: string }>
   /** Ask the AI about the current selection (offered in the touch selection bar). */
   onAskAi?: () => void
+  /** Shown under the 「空のページです」 placeholder (e.g. a button to draft the page with AI). */
+  emptyAction?: React.ReactNode
 }
 
 export interface DocEditorHandle {
@@ -92,7 +94,7 @@ interface Menu {
  * the editor.  On exit the whole document is re-parsed.
  */
 export function DocEditor(props: DocEditorProps) {
-  const { source, onChange, readOnly = false, listMode = 'list', softBreak = 'break', resolveWiki } = props
+  const { source, onChange, readOnly = false, listMode = 'list', softBreak = 'break', resolveWiki, emptyAction } = props
   const rootRef = useRef<HTMLDivElement>(null)
   const taRef = useRef<HTMLTextAreaElement | null>(null)
   const appendRef = useRef<HTMLButtonElement | null>(null)
@@ -169,9 +171,18 @@ export function DocEditor(props: DocEditorProps) {
     const vnodes = renderDocument(tree, ctx)
     let elements = toReact(vnodes, runs, slot)
     if (unit?.kind === 'empty') elements = [<SourceEditor key="empty" />]
-    else if (!vnodes.length) elements = [<p key="ph" className="placeholder">{'空のページです。Enter またはダブルクリックで書き始めましょう。'}</p>]
+    else if (!vnodes.length) {
+      elements = [<p key="ph" className="placeholder">{'空のページです。Enter またはダブルクリックで書き始めましょう。'}</p>]
+      if (emptyAction)
+        elements.push(
+          // Outside the caret / click handling of the document.
+          <div key="ph-act" className="empty-action" onMouseDown={(e) => e.stopPropagation()} onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+            {emptyAction}
+          </div>,
+        )
+    }
     return { elements, runs }
-  }, [tree, src, unit, resolveWiki, softBreak, highlight])
+  }, [tree, src, unit, resolveWiki, softBreak, highlight, emptyAction])
 
   const map = useCallback(() => {
     const e = editRef.current

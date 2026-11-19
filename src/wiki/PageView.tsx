@@ -171,11 +171,25 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
   )
   const [dialog, setDialog] = useState<'rename' | 'delete' | 'history' | 'publish' | null>(null)
   const [publishedAt, setPublishedAt] = useState(page.publishedAt ?? null)
-  const [ai, setAi] = useState<{ content: string; selection: { start: number; end: number; editing: boolean } | null } | null>(null)
+  const [ai, setAi] = useState<{ content: string; selection: { start: number; end: number; editing: boolean } | null; auto?: boolean } | null>(null)
   const aiReady = canEdit && wiki.aiEnabled && wiki.aiAvailable
   const askAi = () => {
     if (saver.status !== 'conflict') setAi({ content: saver.content, selection: editorHandle.current?.selectedUnits() ?? null })
   }
+  // An empty page: one click to have the AI draft it from the title.
+  const contentRef = useRef(saver.content)
+  contentRef.current = saver.content
+  const draftName = page.name.split('/').pop()
+  const aiDraft = useMemo(
+    () =>
+      aiReady ? (
+        <button className="ai-draft" data-testid="ai-draft" onClick={() => setAi({ content: contentRef.current, selection: null, auto: true })}>
+          ✨ AI にお任せで書く
+          <span className="muted small">タイトル「{draftName}」から下書きを作ります</span>
+        </button>
+      ) : undefined,
+    [aiReady, draftName],
+  )
   const [roNotice, setRoNotice] = useState(false)
   const [help, setHelp] = useState(false)
 
@@ -316,6 +330,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
         wikiNames={wikiNames}
         onUploadImage={canEdit ? (f) => uploadImage(wiki.id, f, f.name || 'image.png') : undefined}
         onAskAi={aiReady ? askAi : undefined}
+        emptyAction={aiDraft}
         onReadOnlyAttempt={() => {
           setRoNotice(true)
           setTimeout(() => setRoNotice(false), 2000)
@@ -354,6 +369,7 @@ function PageView({ loaded }: { loaded: Extract<Loaded, { kind: 'page' }>; reloa
           pageName={page.name}
           content={ai.content}
           selection={ai.selection}
+          autoStart={ai.auto}
           onClose={() => {
             setAi(null)
             editorHandle.current?.focus()
