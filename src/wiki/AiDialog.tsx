@@ -492,9 +492,9 @@ export function AiDialog({
               <div>
                 <label className="check-row">
                   <input type="checkbox" checked={wikiCtx} onChange={(e) => toggleWikiCtx(e.target.checked)} data-testid="ai-wiki" />
-                  wiki 内の関連ページ
+                  wiki 全体（関連ページとページ一覧）
                 </label>
-                <div className="ai-hint">リンク先・リンク元・親ページを参考にし、内容が食い違わないようにします。</div>
+                <div className="ai-hint">リンク先・リンク元・親ページ、このページの話題に触れているページ、トップページ、ページ一覧を参考にし、内容が食い違わないようにします。</div>
                 <label className="check-row">
                   <input
                     type="checkbox"
