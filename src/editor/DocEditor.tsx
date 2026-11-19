@@ -878,6 +878,21 @@ export function DocEditor(props: DocEditorProps) {
     const mod = e.metaKey || e.ctrlKey
     /** App shortcuts (select all, …): Cmd on macOS, Ctrl elsewhere. */
     const cmd = isMac ? e.metaKey : e.ctrlKey
+    // Shift+Enter: the whole block(s) under the caret / selection (a paragraph with all its lines, the whole list …).
+    if (e.key === 'Enter' && e.shiftKey && !e.altKey && !mod) {
+      e.preventDefault()
+      if (!liveTree.children.length) return startEdit(0)
+      const range = selectionRange()
+      const off = focusOffset()
+      if (!range && off == null) return
+      const [a, b] = range ?? [off!, off!]
+      const first = liveTree.children[blockIndexAt(liveTree, a)]
+      const last = liveTree.children[blockIndexAt(liveTree, b)]
+      const s0 = first.position!.start.offset!
+      const e0 = Math.max(s0 + 1, last.position!.end.offset!)
+      startEdit(s0, undefined, e0, Math.min(Math.max(off ?? a, s0), e0))
+      return
+    }
     if (e.key === 'Enter' && !e.altKey && !e.shiftKey) {
       e.preventDefault()
       if (mod) {
@@ -1028,7 +1043,7 @@ export function DocEditor(props: DocEditorProps) {
     const h = (e: KeyboardEvent) => {
       const root = rootRef.current
       if (!root || e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey || editRef.current) return
-      if (!KEYS.has(e.key) || (e.shiftKey && e.key !== 'O')) return
+      if (!KEYS.has(e.key) || (e.shiftKey && e.key !== 'O' && e.key !== 'Enter')) return
       const a = document.activeElement
       if (a && a !== document.body) {
         // Only from a link / button outside the document (not from fields, menus, dialogs).
