@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { applyHunks, charDiff, diffHunks } from '../shared/diff'
-import { buildPrompt, parseTagged } from '../server/ai'
+import { buildPrompt, excerptAround, parseTagged } from '../server/ai'
 import { reviewSegments, withSources } from '../src/wiki/AiDialog'
 import { openDb } from '../server/db-node'
 import { createApp } from '../server/app'
@@ -54,6 +54,22 @@ describe('prompt', () => {
     expect(blank).toContain('ページは空です')
     expect(blank).toContain('<target>\n</target>')
     expect(whole).not.toContain('ページは空です')
+  })
+
+  it('lists the wiki\'s pages as background when given', () => {
+    const p = buildPrompt({ wikiName: 'W', pageName: 'P', page: '', start: 0, end: 0, preset: 'auto', instruction: '', wikiPages: ['ホーム', '開発/設計'] })
+    expect(p).toContain('【wiki のページ一覧】')
+    expect(p).toContain('- ホーム\n- 開発/設計\n')
+    expect(p.indexOf('【wiki のページ一覧】')).toBeLessThan(p.indexOf('【指示】'))
+    expect(buildPrompt({ wikiName: 'W', pageName: 'P', page: '', start: 0, end: 0, preset: 'auto', instruction: '' })).not.toContain('ページ一覧')
+  })
+})
+
+describe('excerpt of pages that mention the subject', () => {
+  it('keeps only the paragraphs with the term, each under its heading', () => {
+    const c = '# 概要\n\n関係ない段落\n\n## 道具\n\nNode と crossing field の話\n\nほかの話\n\n## 曲\n\ncrossing field は曲名'
+    expect(excerptAround(c, 'crossing field')).toBe('## 道具\n\nNode と crossing field の話\n\n…\n\n## 曲\n\ncrossing field は曲名')
+    expect(excerptAround('x'.repeat(50) + ' crossing field', 'crossing field', 20)).toHaveLength(21)
   })
 })
 

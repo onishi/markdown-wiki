@@ -58,6 +58,8 @@ export interface ReviseRequest {
   web?: boolean
   /** Other pages of the wiki given as background (links, backlinks, parent). */
   related?: RelatedPage[]
+  /** Names of the wiki's other pages (background; existing pages may be linked). */
+  wikiPages?: string[]
   /** "links" / "keywords" tasks: existing pages whose name (or last part) appears in the target. */
   linkCandidates?: LinkCandidate[]
 }
@@ -176,6 +178,13 @@ ${r.related.map((p) => `<related name="${p.name.replace(/"/g, '&quot;')}" relati
 
 `
     : ''
+  const pages = r.wikiPages?.length
+    ? `【wiki のページ一覧】（この wiki にあるほかのページ。新しく更新された順。参考資料です）
+${r.wikiPages.map((n) => `- ${n}`).join('\n')}
+- 本文を新しく書くときや項目を増やすときは、関係するページを [[ページ名]] の形でリンクしてかまいません（一覧にない名前はリンクにしない）。それ以外の指示では、リンクを足すために文章を変えないでください。
+
+`
+    : ''
   const candidates = r.linkCandidates?.length
     ? `【リンクにできるページ】（wiki に実在するページ。本文中に名前が出てくるもの）
 ${r.linkCandidates.map((c) => `- ${c.name}${c.words.some((w) => w !== c.name) ? `（本文中の表記: ${c.words.map((w) => `「${w}」`).join('')}）` : ''}`).join('\n')}
@@ -184,7 +193,7 @@ ${r.linkCandidates.map((c) => `- ${c.name}${c.words.some((w) => w !== c.name) ? 
     : ''
   return `${pageInfo(r.wikiName, r.pageName)}
 
-${related}${candidates}【指示】
+${related}${pages}${candidates}【指示】
 ${task}
 
 ${
@@ -270,4 +279,26 @@ export const fakeReviser: Reviser = async (r, onText) => {
     onText(whole)
   }
   return { revised, summary, sources: r.web ? [{ uri: 'https://example.com/source', title: 'example.com' }] : undefined }
+}
+
+/** The paragraphs of `content` that mention `term` (with the heading above each), joined with 「…」. */
+export function excerptAround(content: string, term: string, max = 2000): string {
+  const blocks = content.split(/\n[ \t]*\n/)
+  const out: string[] = []
+  let heading = ''
+  let lastHeading = ''
+  let used = 0
+  for (const b of blocks) {
+    if (/^#{1,6}\s/.test(b.trim())) heading = b.trim().split('\n')[0]
+    if (!b.includes(term)) continue
+    const piece = (heading && heading !== lastHeading && !b.trim().startsWith(heading) ? heading + '\n\n' : '') + b.trim()
+    lastHeading = heading
+    if (used + piece.length > max) {
+      if (!out.length) out.push(piece.slice(0, max) + '…')
+      break
+    }
+    out.push(piece)
+    used += piece.length
+  }
+  return out.join('\n\n…\n\n')
 }

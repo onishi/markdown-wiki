@@ -16,7 +16,7 @@ import {
 } from './auth.js'
 import { normalizePageName, parentName, validatePageName } from '../shared/pageName.js'
 import { matchesAll, searchTerms, snippet } from '../shared/search.js'
-import { AI_NEEDS_WEB, AI_NO_WEB, isAiPreset, isAiVolume, type LinkCandidate, type RelatedPage, type Reviser } from './ai.js'
+import { AI_NEEDS_WEB, AI_NO_WEB, excerptAround, isAiPreset, isAiVolume, type LinkCandidate, type RelatedPage, type Reviser } from './ai.js'
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
 import { applyLinks, suggestedLinks, extractWikiTargets, rewriteWikiLinks, unwrapWikiLinks, type SuggestedLink } from '../shared/markdown/wikilinks.js'
 import { diffHunks, groupChanges } from '../shared/diff.js'
@@ -46,9 +46,12 @@ const MAX_FILE = 10 * 1024 * 1024
 const AI_MAX_TARGET = 30_000
 const AI_DAILY_LIMIT = 100
 /** Related pages sent as background: how many, and characters each / in total. */
-const AI_RELATED_PAGES = 6
+const AI_RELATED_PAGES = 10
 const AI_RELATED_EACH = 4000
-const AI_RELATED_TOTAL = 15_000
+const AI_RELATED_TOTAL = 24_000
+/** The wiki's page names sent as background (most recently updated first). */
+const AI_PAGE_LIST = 400
+const AI_PAGE_LIST_CHARS = 8000
 const AI_LINK_CANDIDATES = 40
 /** Rows are capped at 2 MB on Durable Objects: files are stored in 1 MB chunks. */
 const CHUNK = 1024 * 1024
@@ -489,6 +492,32 @@ export function createApp(db: DB, cfg: AppConfig) {
     const parent = parentName(pageName)
     if (parent) add(byName(parent), '親ページ')
     for (const r of backlinkRows(wikiId, pid, pageName).sort((a, b) => b.updatedAt - a.updatedAt)) add(r, 'このページへリンクしているページ')
+    // Pages that talk about this page's subject without linking to it: only the paragraphs that do.
+    const leaf = pageName.split('/').pop()!
+    if (leaf.length >= 2) {
+      const rows = db
+        .prepare('SELECT id, name, content FROM pages WHERE wiki_id = ? AND id != ? AND instr(content, ?) > 0 ORDER BY updated_at DESC LIMIT 8')
+        .all(wikiId, pid, leaf) as { id: string; name: string; content: string }[]
+      for (const r of rows) add({ ...r, content: excerptAround(r.content, leaf) }, 'このページの主題に触れているページ（該当する段落の抜粋）')
+    }
+    // The wiki's top page: what the wiki is about.
+    const top = db.prepare('SELECT p.id, p.name, p.content FROM wikis w JOIN pages p ON p.id = w.top_page_id WHERE w.id = ?').get(wikiId) as
+      | { id: string; name: string; content: string }
+      | undefined
+    add(top, 'wiki のトップページ')
+    return out
+  }
+
+  /** Names of the wiki's pages (other than this one), most recently updated first, within a size budget. */
+  function wikiPageNames(wikiId: string, pid: string): string[] {
+    const rows = db.prepare('SELECT name FROM pages WHERE wiki_id = ? AND id != ? ORDER BY updated_at DESC LIMIT ?').all(wikiId, pid, AI_PAGE_LIST) as { name: string }[]
+    const out: string[] = []
+    let used = 0
+    for (const r of rows) {
+      used += r.name.length + 3
+      if (used > AI_PAGE_LIST_CHARS) break
+      out.push(r.name)
+    }
     return out
   }
 
@@ -677,7 +706,8 @@ export function createApp(db: DB, cfg: AppConfig) {
     db.prepare('DELETE FROM ai_usage WHERE day < ?').run(new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10))
 
     const related = b.wiki === true ? relatedPages(wikiId, pid, page.name, content) : []
-    const req = { wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: !AI_NO_WEB.has(preset) && (b.web === true || AI_NEEDS_WEB.has(preset)), related, linkCandidates: candidates }
+    const wikiPages = b.wiki === true && !linking ? wikiPageNames(wikiId, pid) : []
+    const req = { wikiName: w.name, pageName: page.name, page: content, start, end, preset, volume, instruction, web: !AI_NO_WEB.has(preset) && (b.web === true || AI_NEEDS_WEB.has(preset)), related, wikiPages, linkCandidates: candidates }
     // New [[links]] must point at pages that exist (the model may invent some).
     const exists = (name: string) =>
       !!(db.prepare('SELECT 1 FROM pages WHERE wiki_id = ? AND name = ?').get(wikiId, name) ?? db.prepare('SELECT 1 FROM page_aliases WHERE wiki_id = ? AND name = ?').get(wikiId, name))
@@ -899,3 +929,4 @@ export function createApp(db: DB, cfg: AppConfig) {
 
   return app
 }
+

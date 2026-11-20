@@ -1003,9 +1003,14 @@ test('empty page: 「AI にお任せで書く」 drafts it from the title in one
   await page.goto(`/w/${wid}/settings`)
   await page.getByTestId('ai-enabled').click()
   await expect(page.getByTestId('ai-enabled')).toBeChecked()
+  await newPage(page, 'メモ')
+  await writeBody(page, '関係ない段落\n\n空き について少し書いておく')
+  await saved(page)
   await newPage(page, '空き')
   await page.getByTestId('ai-draft').click()
   await expect(page.getByTestId('ai-summary')).toBeVisible() // started without pressing run
+  // a page that talks about the subject (without linking) is sent as background
+  await expect(page.getByTestId('ai-related')).toContainText('「メモ」')
   await page.getByTestId('ai-apply').click()
   await expect(page.getByTestId('doc')).toContainText('AI 追記')
   await saved(page)
