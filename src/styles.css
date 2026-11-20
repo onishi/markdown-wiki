@@ -238,7 +238,6 @@ label.check { display: flex; gap: 8px; align-items: center; margin: 10px 0; font
 .sidebar-top { display: flex; gap: 6px; align-items: center; }
 .wiki-switch { flex: 1; min-width: 0; font-weight: 600; background: transparent; }
 .role-badge { font-size: 11px; color: var(--fg-muted); border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; white-space: nowrap; }
-.search { width: 100%; }
 .tree { flex: 1; }
 .tree ul { list-style: none; padding-left: 12px; margin: 0; }
 .tree > ul { padding-left: 0; }

@@ -265,12 +265,7 @@ function WikiSwitch({ wikis }: { wikis: WikiSummary[] }) {
 function Sidebar({ wikis, outline, open, desktop }: { wikis: WikiSummary[]; outline: OutlineSource | null; open: boolean; desktop: boolean }) {
   const { wiki, pages, canEdit, openNewPage } = useWiki()
   const { me, logout } = useSession()
-  const [q, setQ] = useState('')
-  const filtered = useMemo(() => {
-    const s = q.trim().toLowerCase()
-    return s ? pages.filter((p) => p.name.toLowerCase().includes(s)) : pages
-  }, [q, pages])
-  const tree = useMemo(() => buildTree(filtered), [filtered])
+  const tree = useMemo(() => buildTree(pages), [pages])
   const [tab, setTab] = useState<'pages' | 'outline'>(() => {
     try {
       return localStorage.getItem('mw:sideTab') === 'pages' ? 'pages' : 'outline'
@@ -309,13 +304,12 @@ function Sidebar({ wikis, outline, open, desktop }: { wikis: WikiSummary[]; outl
         </nav>
       ) : (
         <>
-        <input className="search" type="search" placeholder="ページ名で検索" value={q} onChange={(e) => setQ(e.target.value)} aria-label="ページ名で検索" data-testid="search" />
         <nav className="tree" aria-label="ページ階層">
           <NavLink end to={`/w/${wiki.slug}?list`} className="tree-home">
             すべてのページ
           </NavLink>
-          {tree.length === 0 && <div className="muted small tree-empty">{q ? '該当するページがありません' : 'ページはまだありません'}</div>}
-          <TreeList nodes={tree} forceOpen={!!q} />
+          {tree.length === 0 && <div className="muted small tree-empty">ページはまだありません</div>}
+          <TreeList nodes={tree} />
         </nav>
         </>
       )}
@@ -335,17 +329,17 @@ function Sidebar({ wikis, outline, open, desktop }: { wikis: WikiSummary[]; outl
   )
 }
 
-function TreeList({ nodes, forceOpen }: { nodes: TreeNode[]; forceOpen: boolean }) {
+function TreeList({ nodes }: { nodes: TreeNode[] }) {
   return (
     <ul>
       {nodes.map((n) => (
-        <TreeItem key={n.name} node={n} forceOpen={forceOpen} />
+        <TreeItem key={n.name} node={n} />
       ))}
     </ul>
   )
 }
 
-function TreeItem({ node, forceOpen }: { node: TreeNode; forceOpen: boolean }) {
+function TreeItem({ node }: { node: TreeNode }) {
   const { wiki, pages } = useWiki()
   const isPublished = !!node.pageId && !!pages.find((p) => p.id === node.pageId)?.publishedAt
   const loc = useLocation()
@@ -356,7 +350,7 @@ function TreeItem({ node, forceOpen }: { node: TreeNode; forceOpen: boolean }) {
   useEffect(() => {
     if (inPath) setOpen(true)
   }, [inPath])
-  const expanded = forceOpen || open
+  const expanded = open
   return (
     <li>
       <div className={`tree-row ${current ? 'current' : ''}`}>
@@ -372,7 +366,7 @@ function TreeItem({ node, forceOpen }: { node: TreeNode; forceOpen: boolean }) {
         </Link>
         {isPublished && <span className="tree-pub" title="公開中" aria-label="公開中" />}
       </div>
-      {expanded && node.children.length > 0 && <TreeList nodes={node.children} forceOpen={forceOpen} />}
+      {expanded && node.children.length > 0 && <TreeList nodes={node.children} />}
     </li>
   )
 }
