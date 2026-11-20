@@ -89,10 +89,11 @@ test('create wiki and pages, autosave, wiki links, hierarchy, rename', async ({ 
   await expect(page.getByText('このページはまだ作成されていません。')).toBeVisible()
   await expect(page.locator('.children a')).toHaveText('認証')
 
-  // search by page name
-  await page.getByTestId('search').fill('認証')
-  await expect(page.locator('.tree .tree-row a')).toHaveText(['開発', 'API', '認証'])
-  await page.getByTestId('search').fill('')
+  // search by page name (⌘K / the header button); the parent path is shown
+  await page.getByTestId('quick-open').click()
+  await page.getByTestId('quick-open-input').fill('認証')
+  await expect(page.getByTestId('quick-open-list').locator('button').first()).toHaveText('開発/API/認証')
+  await page.keyboard.press('Escape')
 
   // the Home link is no longer "missing"
   await page.goto(`/w/${wid}/p/Home`)
