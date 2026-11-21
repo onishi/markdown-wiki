@@ -16,3 +16,14 @@ const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDat
 
 /** Full date and time, for a tooltip next to a relative time. */
 export const fullTime = (ms: number) => new Date(ms).toLocaleString('ja-JP', { dateStyle: 'medium', timeStyle: 'short' })
+
+/** Pages not edited for this long get a "stale" mark. */
+export const STALE_MS = 180 * 86400_000
+
+/** "8 か月更新されていません" / "2 年以上更新されていません"; null while fresh. */
+export function staleLabel(ms: number, now = Date.now()): string | null {
+  const age = now - ms
+  if (age < STALE_MS) return null
+  const years = Math.floor(age / (365 * 86400_000))
+  return years >= 1 ? `${years} 年以上更新されていません` : `${Math.floor(age / (30 * 86400_000))} か月更新されていません`
+}

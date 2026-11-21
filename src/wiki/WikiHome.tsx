@@ -1,6 +1,7 @@
 import { Link, Navigate, useSearchParams } from 'react-router-dom'
 import { pageUrl, type PageSummary } from '../api'
-import { fullTime, relTime } from '../time'
+import { useState } from 'react'
+import { fullTime, relTime, staleLabel } from '../time'
 import { useWiki, HeaderTitle } from './WikiLayout'
 
 export function WikiHome() {
@@ -11,7 +12,9 @@ export function WikiHome() {
   const top = wiki.topPageId ? (pages.find((p) => p.id === wiki.topPageId)?.name ?? wiki.topPage) : null
   if (top && !params.has('list')) return <Navigate to={pageUrl(wiki.slug, top)} replace />
   const recent = [...pages].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 8)
-  const sorted = [...pages].sort((a, b) => a.name.localeCompare(b.name, 'ja'))
+  const [order, setOrder] = useState<'name' | 'old'>('name')
+  const sorted = [...pages].sort((a, b) => (order === 'old' ? a.updatedAt - b.updatedAt : a.name.localeCompare(b.name, 'ja')))
+  const stale = pages.filter((p) => staleLabel(p.updatedAt)).length
   return (
     <div className="page">
       <div className="home-title">
@@ -59,13 +62,26 @@ export function WikiHome() {
           <section>
             <div className="section-head">
               <h3>すべてのページ</h3>
-              <span className="muted small">{pages.length} ページ</span>
+              <span className="muted small section-count">
+                {pages.length} ページ{stale > 0 && <>（うち半年以上更新なし {stale}）</>}
+              </span>
+              <span className="seg small" role="group" aria-label="並び順">
+                <button className={order === 'name' ? 'on' : ''} onClick={() => setOrder('name')} data-testid="order-name">
+                  名前順
+                </button>
+                <button className={order === 'old' ? 'on' : ''} onClick={() => setOrder('old')} data-testid="order-old">
+                  更新が古い順
+                </button>
+              </span>
             </div>
-            <ul className="list list-compact">
+            <ul className="list list-compact" data-testid="all-pages">
               {sorted.map((p) => (
                 <li key={p.id}>
                   <Link to={pageUrl(wiki.slug, p.name)} className="list-row">
                     <PageName page={p} />
+                    <span className={'list-meta' + (staleLabel(p.updatedAt) ? ' stale' : '')} title={staleLabel(p.updatedAt) ?? fullTime(p.updatedAt)}>
+                      {relTime(p.updatedAt)}
+                    </span>
                   </Link>
                 </li>
               ))}

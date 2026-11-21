@@ -9,7 +9,7 @@ import { normalizePageName } from '../../shared/pageName'
 import { DocEditor, type DocEditorHandle } from '../editor/DocEditor'
 import { useSession } from '../App'
 import { useWiki } from './WikiLayout'
-import { fullTime, relTime } from '../time'
+import { fullTime, relTime, staleLabel } from '../time'
 import { readDraft, usePageSaver, type Conflict } from './usePageSaver'
 import { ConflictDialog } from './ConflictDialog'
 import { Modal } from './Modal'
@@ -506,6 +506,11 @@ function PageMeta({ who, at }: { who: string | null; at: number }) {
     <div className="page-meta muted small" title={fullTime(at)} data-testid="page-meta">
       {who ? (who === 'あなた' ? 'あなたが' : `${who} さんが`) : ''}
       {relTime(at) === 'たった今' ? 'たった今更新' : `${relTime(at)}に更新`}
+      {staleLabel(at) && (
+        <span className="tag tag-stale" data-testid="stale" title="内容が古くなっていないか確かめてください">
+          {staleLabel(at)}
+        </span>
+      )}
     </div>
   )
 }

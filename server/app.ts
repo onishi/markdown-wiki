@@ -849,6 +849,29 @@ export function createApp(db: DB, cfg: AppConfig) {
     return c.json({ file: { id, name, type, size: bytes.length, url: `/api/wikis/${wikiId}/files/${id}` } }, 201)
   })
 
+  /** Every uploaded file in the wiki, newest first, with the pages that show it. */
+  app.get('/api/wikis/:wid/files', (c) => {
+    const { wikiId } = need(c, 'viewer')
+    const files = db
+      .prepare(
+        `SELECT f.id, f.name, f.type, f.size, f.created_at AS createdAt, u.name AS byName
+         FROM files f LEFT JOIN users u ON u.id = f.created_by WHERE f.wiki_id = ? ORDER BY f.created_at DESC, f.rowid DESC`,
+      )
+      .all(wikiId) as { id: string; name: string; type: string; size: number; createdAt: number; byName: string | null }[]
+    const refs = new Map<string, { id: string; name: string }[]>()
+    for (const r of db
+      .prepare(
+        `SELECT f.id AS fid, p.id, p.name FROM files f JOIN pages p ON p.wiki_id = f.wiki_id AND instr(p.content, '/files/' || f.id) > 0
+         WHERE f.wiki_id = ? ORDER BY p.name`,
+      )
+      .all(wikiId) as { fid: string; id: string; name: string }[]) {
+      const list = refs.get(r.fid) ?? []
+      list.push({ id: r.id, name: r.name })
+      refs.set(r.fid, list)
+    }
+    return c.json({ files: files.map((f) => ({ ...f, url: `/api/wikis/${wikiId}/files/${f.id}`, pages: refs.get(f.id) ?? [] })) })
+  })
+
   app.get('/api/wikis/:wid/files/:fid', (c) => {
     const fid = c.req.param('fid')
     const u = c.get('user') as User | undefined

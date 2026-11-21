@@ -864,6 +864,43 @@ export function DocEditor(props: DocEditorProps) {
     scrollCaretIntoView()
   }
 
+  const lastG = useRef(-1e9)
+  /** Caret to the start of the previous / next heading's text (any level). */
+  const jumpHeading = (dir: 1 | -1) => {
+    const root = rootRef.current
+    if (!root) return
+    const sel = ensureSelection()
+    if (!sel) return
+    const heads = [...root.querySelectorAll('[data-h]')].filter((h) => !h.closest('.src-editor'))
+    const firstText = (h: Element) => (h.querySelector('span.r')?.firstChild as Text | null) ?? null
+    const caret = document.createRange()
+    caret.setStart(sel.focusNode!, sel.focusOffset)
+    const cmp = (t: Text) => caret.comparePoint(t, 0) // -1: t is before the caret, 1: after
+    const cand = heads.map(firstText).filter((t): t is Text => !!t)
+    const target = dir > 0 ? cand.find((t) => cmp(t) > 0) : [...cand].reverse().find((t) => cmp(t) < 0)
+    if (!target) return
+    goalX.current = null
+    setAtEnd(false)
+    sel.setBaseAndExtent(target, 0, target, 0)
+    setMenu(null)
+    target.parentElement!.closest('[data-h]')!.scrollIntoView({ block: 'start' })
+    scrollCaretIntoView()
+  }
+
+  /** gg / G: caret to the start of the first / end of the last text of the page. */
+  const caretToEdge = (dir: 1 | -1) => {
+    const spans = [...(rootRef.current?.querySelectorAll('span.r') ?? [])].filter((x) => !x.closest('.src-editor') && x.firstChild)
+    const sp = dir > 0 ? spans[spans.length - 1] : spans[0]
+    if (!sp) return
+    const t = sp.firstChild as Text
+    goalX.current = null
+    setAtEnd(false)
+    setMenu(null)
+    document.getSelection()?.setBaseAndExtent(t, dir > 0 ? t.length : 0, t, dir > 0 ? t.length : 0)
+    if (dir < 0) window.scrollTo({ top: 0 }) // show the title too
+    else scrollCaretIntoView()
+  }
+
   const compEnd = useRef(-1e9)
   const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (edit || (e.target as Element).closest('.src-editor')) return
@@ -993,7 +1030,20 @@ export function DocEditor(props: DocEditorProps) {
       }
     }
 
+    if (e.key !== 'g') lastG.current = -1e9
     // Vim-style keys (display mode = normal mode, edit mode = insert mode).
+    // G: end of the page.
+    if (!mod && !e.altKey && e.key === 'G') {
+      e.preventDefault()
+      caretToEdge(1)
+      return
+    }
+    // [ / ]: previous / next heading (any keyboard layout, so Shift is not checked).
+    if (!mod && !e.altKey && (e.key === '[' || e.key === ']')) {
+      e.preventDefault()
+      jumpHeading(e.key === ']' ? 1 : -1)
+      return
+    }
     if (!mod && !e.altKey && (e.key === 'o' || e.key === 'O')) {
       e.preventDefault()
       openNewLine(e.key === 'o' ? 'below' : 'above')
@@ -1015,6 +1065,15 @@ export function DocEditor(props: DocEditorProps) {
         if (e.key === 'a' && node.nodeType === Node.TEXT_NODE && offset < (node as Text).length) offset++
         const off = map().domToSource(node, offset)
         if (off != null) startEdit(off)
+        return
+      }
+      // gg: top of the page (two g's in a row).
+      if (e.key === 'g') {
+        e.preventDefault()
+        if (performance.now() - lastG.current < 800) {
+          lastG.current = -1e9
+          caretToEdge(-1)
+        } else lastG.current = performance.now()
         return
       }
       const vim: Record<string, Move> = {
@@ -1054,11 +1113,11 @@ export function DocEditor(props: DocEditorProps) {
   const onKeyDownRef = useRef(onKeyDown)
   onKeyDownRef.current = onKeyDown
   useEffect(() => {
-    const KEYS = new Set(['h', 'j', 'k', 'l', 'i', 'a', 'o', 'O', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'])
+    const KEYS = new Set(['h', 'j', 'k', 'l', 'i', 'a', 'o', 'O', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'g', 'G', '[', ']'])
     const h = (e: KeyboardEvent) => {
       const root = rootRef.current
       if (!root || e.defaultPrevented || e.isComposing || e.metaKey || e.ctrlKey || e.altKey || editRef.current) return
-      if (!KEYS.has(e.key) || (e.shiftKey && e.key !== 'O' && e.key !== 'Enter')) return
+      if (!KEYS.has(e.key) || (e.shiftKey && !['O', 'G', 'Enter', '[', ']'].includes(e.key))) return
       const a = document.activeElement
       if (a && a !== document.body) {
         // Only from a link / button outside the document (not from fields, menus, dialogs).
