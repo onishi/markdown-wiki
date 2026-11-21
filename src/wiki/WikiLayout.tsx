@@ -317,6 +317,9 @@ function Sidebar({ wikis, outline, open, desktop }: { wikis: WikiSummary[]; outl
         <NavLink to={`/w/${wiki.slug}/changes`} className="side-link" data-testid="recent-changes">
           最近の更新
         </NavLink>
+        <NavLink to={`/w/${wiki.slug}/files`} className="side-link" data-testid="attachments-link">
+          添付ファイル
+        </NavLink>
         <NavLink to={`/w/${wiki.slug}/settings`} className="side-link">
           共有設定・メンバー
         </NavLink>

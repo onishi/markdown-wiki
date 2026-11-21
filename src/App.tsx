@@ -9,6 +9,7 @@ import { PageRoute } from './wiki/PageView'
 import { WikiHome } from './wiki/WikiHome'
 import { WikiSettings } from './wiki/WikiSettings'
 import { RecentChanges } from './wiki/RecentChanges'
+import { Attachments } from './wiki/Attachments'
 import { PublicPage } from './wiki/PublicPage'
 import { fullTime, relTime } from './time'
 
@@ -63,6 +64,7 @@ function Authed() {
           <Route path="p/*" element={<PageRoute />} />
           <Route path="settings" element={<WikiSettings />} />
           <Route path="changes" element={<RecentChanges />} />
+          <Route path="files" element={<Attachments />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

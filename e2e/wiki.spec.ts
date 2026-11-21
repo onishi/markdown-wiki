@@ -1027,3 +1027,62 @@ test('「AI にお任せで書く」 is not offered when AI is off for the wiki'
   await expect(page.getByTestId('ai-draft')).toHaveCount(0)
   await page.context().close()
 })
+
+/** Upload a generated PNG through the API; returns its URL. */
+async function uploadPng(page: Page, wid: string, name: string) {
+  return page.evaluate(
+    async ({ wid, name }) => {
+      const c = document.createElement('canvas')
+      c.width = 8
+      c.height = 8
+      c.getContext('2d')!.fillRect(0, 0, 8, 8)
+      const blob: Blob = await new Promise((r) => c.toBlob((b) => r(b!), 'image/png'))
+      const r = await fetch(`/api/wikis/${wid}/files?name=${encodeURIComponent(name)}`, { method: 'POST', body: blob, headers: { 'x-requested-with': 'markdown-wiki' } })
+      return ((await r.json()) as { file: { url: string } }).file.url
+    },
+    { wid, name },
+  )
+}
+
+test('attachments: every file with the pages that use it; unused ones can be listed', async ({ browser }) => {
+  const page = await login(browser, uniq('files'))
+  const wid = await createWiki(page, '添付 wiki')
+  await newPage(page, 'Pics')
+  const used = await uploadPng(page, wid, '使う.png')
+  await uploadPng(page, wid, '余り.png')
+  await writeBody(page, `![使う](${used})`)
+  await saved(page)
+
+  await page.getByTestId('attachments-link').click()
+  await expect(page.locator('.page-title')).toHaveText('添付ファイル')
+  const rows = page.getByTestId('file-row')
+  await expect(rows).toHaveCount(2)
+  await expect(rows.filter({ hasText: '使う.png' }).getByTestId('file-refs')).toHaveText(/使っているページ:\s*Pics/)
+  await expect(rows.filter({ hasText: '余り.png' }).getByTestId('file-refs')).toHaveText('どのページからも使われていません')
+  await page.getByTestId('files-unused').click()
+  await expect(rows).toHaveCount(1)
+  await expect(rows).toContainText('余り.png')
+  await page.getByText('すべて', { exact: true }).click()
+  await rows.filter({ hasText: '使う.png' }).getByRole('link', { name: 'Pics' }).click()
+  await expect(page.locator('.page-title')).toHaveText('Pics')
+  await page.context().close()
+})
+
+test('pages not updated for half a year are marked; the page list can be sorted oldest first', async ({ browser }) => {
+  const page = await login(browser, uniq('stale'))
+  const wid = await createWiki(page, '古い wiki')
+  await newPage(page, '古いメモ')
+  await writeBody(page, '昔の話')
+  await saved(page)
+  await expect(page.getByTestId('stale')).toHaveCount(0)
+  // A year later (the browser's clock; the page itself was saved today).
+  await page.clock.install({ time: Date.now() + 400 * 86400_000 })
+  await page.reload()
+  await expect(page.getByTestId('stale')).toHaveText('1 年以上更新されていません')
+  await page.goto(`/w/${wid}?list`)
+  await expect(page.getByTestId('all-pages').locator('.list-meta.stale')).toHaveCount(1)
+  await expect(page.getByText('（うち半年以上更新なし 1）')).toBeVisible()
+  await page.getByTestId('order-old').click()
+  await expect(page.getByTestId('all-pages').locator('.list-leaf').first()).toHaveText('古いメモ')
+  await page.context().close()
+})

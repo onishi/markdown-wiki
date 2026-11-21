@@ -81,6 +81,42 @@ test.describe('cursor ↔ source mapping', () => {
     expect((await focusInfo(page)).text).toContain('Markdown Wiki')
   })
 
+  test('gg / G go to the top / end of the page; [ / ] jump between headings', async ({ page }) => {
+    await caretAt(page, '太字の文章', 1)
+    await page.keyboard.press(']')
+    expect(await focusInfo(page)).toMatchObject({ text: '表', offset: 0 })
+    await page.keyboard.press(']')
+    expect(await focusInfo(page)).toMatchObject({ text: 'コード', offset: 0 })
+    await page.keyboard.press(']')
+    expect(await focusInfo(page)).toMatchObject({ text: 'JavaScript', offset: 0 })
+    await page.keyboard.press('[')
+    expect(await focusInfo(page)).toMatchObject({ text: 'コード', offset: 0 })
+    await caretAt(page, 'コード', 2) // inside a heading: [ goes to the start of that heading first
+    await page.keyboard.press('[')
+    expect(await focusInfo(page)).toMatchObject({ text: 'コード', offset: 0 })
+    await page.keyboard.press('[')
+    expect(await focusInfo(page)).toMatchObject({ text: '表', offset: 0 })
+    await page.keyboard.press('G')
+    expect((await focusInfo(page)).text).toContain('自動リンク')
+    await page.keyboard.press(']') // no heading below: stays
+    expect((await focusInfo(page)).text).toContain('自動リンク')
+    // a lone g does nothing; g then j is just j
+    await page.keyboard.press('g')
+    await page.keyboard.press('k')
+    expect((await focusInfo(page)).text).not.toContain('Markdown Wiki')
+    await page.keyboard.press('g')
+    await page.keyboard.press('g')
+    expect(await focusInfo(page)).toMatchObject({ offset: 0 })
+    expect((await focusInfo(page)).text).toContain('Markdown Wiki')
+    expect(await source(page)).toBe(SAMPLE)
+
+    // without clicking first
+    await page.reload()
+    await page.waitForSelector('[data-testid=doc] span.r')
+    await page.keyboard.press('G')
+    expect((await focusInfo(page)).text).toContain('自動リンク')
+  })
+
   test('o / O start a new, empty block below / above (the current block is not opened)', async ({ page }) => {
     const ta = page.locator('[data-testid=src-editor] textarea')
     await caretAt(page, '太字の文章', 1)
