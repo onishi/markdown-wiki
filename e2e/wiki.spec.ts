@@ -1086,3 +1086,67 @@ test('pages not updated for half a year are marked; the page list can be sorted 
   await expect(page.getByTestId('all-pages').locator('.list-leaf').first()).toHaveText('古いメモ')
   await page.context().close()
 })
+
+test('MCP: an app connects through login + consent, uses the tools, and can be revoked in settings', async ({ browser }) => {
+  const REDIRECT = 'https://client.example/callback'
+  const owner = await login(browser, uniq('mcp'))
+  const wid = await createWiki(owner, 'MCP wiki')
+  await newPage(owner, 'メモ')
+  await writeBody(owner, 'MCP から読む本文')
+  await saved(owner)
+  const slug = owner.url().split('/w/')[1].split('/')[0]
+  const email = await owner.evaluate(async () => (await (await fetch('/api/me')).json()).user.email as string)
+
+  // An MCP client registers itself and sends the user to /oauth/authorize (fresh browser: not logged in).
+  const base = new URL(owner.url()).origin
+  const reg = await owner.request.post('/oauth/register', { data: { client_name: 'テストアプリ', redirect_uris: [REDIRECT] } })
+  const clientId = (await reg.json()).client_id
+  const verifier = 'x'.repeat(48)
+  const challenge = await owner.evaluate(async (v) => {
+    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v)))
+    return btoa(String.fromCharCode(...d)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  }, verifier)
+  const q = new URLSearchParams({ response_type: 'code', client_id: clientId, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256', state: 's1', resource: `${base}/mcp/${slug}` })
+
+  const ctx = await browser.newContext()
+  const page = await ctx.newPage()
+  let callback = ''
+  await page.route('https://client.example/**', (r) => ((callback = r.request().url()), r.fulfill({ body: 'ok' })))
+  await page.goto(`/oauth/authorize?${q}`)
+  await expect(page).toHaveURL(/\/login\?returnTo=/)
+  await page.getByTestId('dev-email').fill(email)
+  await page.getByRole('button', { name: '開発用ログイン' }).click()
+  await expect(page.getByTestId('connect-client')).toHaveText('テストアプリ')
+  await expect(page.getByTestId('connect-wiki')).toHaveText('MCP wiki')
+  await expect(page.getByTestId('connect-write')).toBeChecked()
+  await page.getByTestId('connect-approve').click()
+  await expect.poll(() => callback).toContain('code=')
+  const back = new URL(callback)
+  expect(back.searchParams.get('state')).toBe('s1')
+
+  const tok = await (
+    await page.request.post('/oauth/token', { form: { grant_type: 'authorization_code', code: back.searchParams.get('code')!, redirect_uri: REDIRECT, client_id: clientId, code_verifier: verifier } })
+  ).json()
+  const mcp = async (method: string, params?: unknown) =>
+    (await page.request.post(`/mcp/${slug}`, { headers: { authorization: `Bearer ${tok.access_token}` }, data: { jsonrpc: '2.0', id: 1, method, params } })).json()
+  expect((await mcp('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } })).result.serverInfo.title).toBe('Markdown Wiki「MCP wiki」')
+  const read = await mcp('tools/call', { name: 'read_page', arguments: { name: 'メモ' } })
+  expect(read.result.content[0].text).toContain('MCP から読む本文')
+  await mcp('tools/call', { name: 'edit_page', arguments: { name: 'メモ', old_text: '', new_text: 'AI が足した行' } })
+
+  // The change shows up for the owner (history says MCP); the app is listed in settings.
+  await owner.goto(`/w/${wid}/p/メモ`)
+  await expect(owner.getByTestId('doc')).toContainText('AI が足した行')
+  await owner.goto(`/w/${wid}/changes`)
+  await expect(owner.getByTestId('changes')).toContainText('MCP')
+  await owner.goto(`/w/${wid}/settings`)
+  await expect(owner.getByTestId('mcp-url')).toHaveText(`${base}/mcp/${slug}`)
+  await expect(owner.getByTestId('mcp-grants')).toContainText('テストアプリ')
+  await expect(owner.getByTestId('mcp-grants')).toContainText('読み書き')
+  owner.once('dialog', (d) => d.accept())
+  await owner.getByTestId('mcp-revoke').click()
+  await expect(owner.getByTestId('mcp-grants')).toHaveCount(0)
+  expect((await page.request.post(`/mcp/${slug}`, { headers: { authorization: `Bearer ${tok.access_token}` }, data: { jsonrpc: '2.0', id: 2, method: 'ping' } })).status()).toBe(401)
+  await ctx.close()
+  await owner.context().close()
+})

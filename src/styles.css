@@ -679,3 +679,17 @@ body:has(.touch-bar) .page, body:has(.sel-bar) .page { padding-bottom: 140px; }
 .file-name { font-weight: 600; overflow-wrap: anywhere; }
 .file-refs { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
 .file-refs .tag-stale { margin-left: 0; }
+
+/* MCP */
+.mcp-url { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+.mcp-url code { flex: 1; min-width: 0; overflow-wrap: anywhere; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; }
+.mcp-howto { padding-left: 18px; margin: 6px 0 12px; }
+.mcp-howto code { overflow-wrap: anywhere; }
+.mcp-sub { margin: 16px 0 4px; font-size: 14px; }
+[data-testid=mcp-grants] .list-row { gap: 12px; }
+[data-testid=mcp-grants] .tag { margin-left: 8px; }
+.connect-card { max-width: 460px; }
+.connect-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; border: 0; padding: 0; }
+.connect-field legend { margin-bottom: 4px; font-weight: 600; }
+.connect-field label { display: flex; gap: 6px; align-items: baseline; }
+.connect-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

@@ -95,6 +95,35 @@ CREATE TABLE IF NOT EXISTS ai_usage (
   count INTEGER NOT NULL,
   PRIMARY KEY (user_id, day)
 );
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  redirect_uris TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_codes (
+  code_hash TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  wiki_id TEXT NOT NULL REFERENCES wikis(id) ON DELETE CASCADE,
+  redirect_uri TEXT NOT NULL,
+  challenge TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_grants (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL REFERENCES oauth_clients(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  wiki_id TEXT NOT NULL REFERENCES wikis(id) ON DELETE CASCADE,
+  scope TEXT NOT NULL,
+  access_hash TEXT UNIQUE,
+  access_expires INTEGER,
+  refresh_hash TEXT UNIQUE,
+  refresh_expires INTEGER,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS page_revisions (
   page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
   version INTEGER NOT NULL,

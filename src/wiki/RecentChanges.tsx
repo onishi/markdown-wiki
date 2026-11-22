@@ -20,7 +20,7 @@ export interface Change {
   removed: number
 }
 
-export const VIA_LABEL: Record<string, string> = { ai: 'AI の提案', restore: '復元', rename: 'リンク更新' }
+export const VIA_LABEL: Record<string, string> = { ai: 'AI の提案', restore: '復元', rename: 'リンク更新', mcp: 'MCP' }
 
 const day = (t: number) => new Date(t).toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' })
 

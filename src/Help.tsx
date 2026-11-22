@@ -48,6 +48,7 @@ export function Help() {
         <a href="#ai">AI</a>
         <a href="#history">履歴</a>
         <a href="#share">共有</a>
+        <a href="#mcp">MCP</a>
         <a href="#mobile">スマホ</a>
         <a href="#keys">キー操作</a>
       </nav>
@@ -222,6 +223,18 @@ export function Help() {
         <p>
           オーナーは、ページ右上の「…」→「公開する…」で、そのページだけをログインしていない人にも公開できます。URL はいつもと同じで、公開中のページには「公開中」のしるしが付きます。公開されるのは本文と、そのページに貼った画像だけです。履歴や下位のページは公開されず、公開されていないページへのリンクはただの文字として表示されます。「公開中」を押すと URL のコピーや公開の取りやめができます。
         </p>
+      </section>
+
+      <section id="mcp">
+        <h2>AI アプリから使う（MCP）</h2>
+        <p>
+          wiki ごとに MCP サーバーがあり、Claude などの AI アプリから wiki のページを読む・検索する・作る・書き換えることができます。URL は「共有設定・メンバー」の「AI アプリから使う（MCP）」にあります（<code>/mcp/識別子</code>）。
+        </p>
+        <ul>
+          <li>claude.ai では、設定 → コネクタ → 「カスタムコネクタを追加」にその URL を入れます。Claude Code では <code>claude mcp add --transport http 名前 URL</code> で追加し、<code>/mcp</code> から認証します。</li>
+          <li>追加すると、この wiki のログインと許可の画面が開きます。「読み書き」か「読むだけ」を選んで許可します。閲覧者は読むだけです。</li>
+          <li>AI はあなたの権限で動き、変更はページの履歴に「MCP」として残ります。接続は同じ画面からいつでも取り消せます。メンバーから外れると、その接続も使えなくなります。</li>
+        </ul>
       </section>
 
       <section id="mobile">

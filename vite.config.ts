@@ -13,6 +13,9 @@ export default defineConfig({
     proxy: {
       '/api': { target: api, changeOrigin: false },
       '/auth': { target: api, changeOrigin: false },
+      '/mcp': { target: api, changeOrigin: false },
+      '/oauth': { target: api, changeOrigin: false },
+      '/.well-known': { target: api, changeOrigin: false },
     },
   },
   test: {

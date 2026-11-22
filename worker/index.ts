@@ -70,7 +70,7 @@ export class WikiServer extends DurableObject<Env> {
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
-    // Only /api/* and /auth/* reach the Worker (run_worker_first); everything else is static.
+    // Only /api/*, /auth/*, /mcp/*, /oauth/*, /.well-known/* reach the Worker (run_worker_first); everything else is static.
     return env.WIKI.get(env.WIKI.idFromName('main')).fetch(req)
   },
 }
