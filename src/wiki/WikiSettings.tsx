@@ -5,6 +5,7 @@ import { PageName } from './WikiHome'
 import { useSession } from '../App'
 import { useWiki, HeaderTitle } from './WikiLayout'
 import { Modal } from './Modal'
+import { McpSettings } from './McpSettings'
 import { normalizeSlug, validateSlug } from '../../shared/wikiSlug'
 
 interface Member {
@@ -158,6 +159,8 @@ export function WikiSettings() {
           </>
         )}
       </section>
+
+      <McpSettings wikiId={wiki.id} slug={wiki.slug} />
 
       {isOwner && (
         <>

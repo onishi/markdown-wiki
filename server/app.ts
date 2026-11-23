@@ -20,6 +20,7 @@ import { AI_NEEDS_WEB, AI_NO_WEB, excerptAround, isAiPreset, isAiVolume, type Li
 import { normalizeSlug, validateSlug } from '../shared/wikiSlug.js'
 import { applyLinks, suggestedLinks, extractWikiTargets, rewriteWikiLinks, unwrapWikiLinks, type SuggestedLink } from '../shared/markdown/wikilinks.js'
 import { diffHunks, groupChanges } from '../shared/diff.js'
+import { isOAuthClientPath, mountMcp, type PageInfo, type SaveResult } from './mcp.js'
 
 export type Role = 'owner' | 'editor' | 'viewer'
 const RANK: Record<Role, number> = { viewer: 1, editor: 2, owner: 3 }
@@ -79,7 +80,8 @@ export function createApp(db: DB, cfg: AppConfig) {
   // CSRF: state-changing requests must carry a custom header (forces a CORS preflight
   // cross-origin, which we never allow) and, if present, a same-origin Origin header.
   app.use('*', async (c, next) => {
-    if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+    // MCP / OAuth client endpoints use bearer tokens or no credentials at all (never cookies).
+    if (c.req.method !== 'GET' && c.req.method !== 'HEAD' && !isOAuthClientPath(c.req.path)) {
       if (c.req.header('x-requested-with') !== 'markdown-wiki') return c.json({ error: 'csrf' }, 403)
       const origin = c.req.header('origin')
       if (origin && origin !== cfg.appOrigin && origin !== new URL(c.req.url).origin) return c.json({ error: 'csrf' }, 403)
@@ -407,10 +409,9 @@ export function createApp(db: DB, cfg: AppConfig) {
   })
 
   /** Full-text search over page names and bodies: every term must match (AND). */
-  app.get('/api/wikis/:wid/search', (c) => {
-    const { wikiId } = need(c, 'viewer')
-    const terms = searchTerms(c.req.query('q') ?? '')
-    if (terms.length === 0) return c.json({ results: [], more: false })
+  function searchPages(wikiId: string, q: string) {
+    const terms = searchTerms(q)
+    if (terms.length === 0) return { results: [], more: false }
     const like = (t: string) => `%${t.replace(/[\\%_]/g, (m) => '\\' + m)}%`
     // LIKE narrows (ASCII case-insensitive); matchesAll confirms with the same rule.
     const where = terms.map(() => "(name LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')").join(' AND ')
@@ -425,7 +426,11 @@ export function createApp(db: DB, cfg: AppConfig) {
       nameMatch: terms.every((t) => r.name.toLowerCase().includes(t)),
       snippet: snippet(r.content, terms),
     }))
-    return c.json({ results, more: rows.length > 100 })
+    return { results, more: rows.length > 100 }
+  }
+  app.get('/api/wikis/:wid/search', (c) => {
+    const { wikiId } = need(c, 'viewer')
+    return c.json(searchPages(wikiId, c.req.query('q') ?? ''))
   })
 
   /** Pages whose [[links]] point at this page (by its name or one of its old names). */
@@ -609,28 +614,31 @@ export function createApp(db: DB, cfg: AppConfig) {
     return c.json({ revision: r })
   })
 
-  app.post('/api/wikis/:wid/pages', async (c) => {
-    const { wikiId } = need(c, 'editor')
-    const b = await body<{ name?: string; content?: string }>(c)
-    const name = validatePageName(b.name ?? '')
-    if (!name) return c.json({ error: 'invalid_name' }, 400)
-    const content = typeof b.content === 'string' ? b.content : ''
-    if (content.length > MAX_CONTENT) return c.json({ error: 'too_large' }, 413)
+  function createPage(wikiId: string, uid: string, rawName: string, content: string, via: string | null = null) {
+    const name = validatePageName(rawName)
+    if (!name) return { error: 'invalid_name' as const }
+    if (content.length > MAX_CONTENT) return { error: 'too_large' as const }
     const id = crypto.randomUUID()
     const now = Date.now()
-    const uid = c.get('user').id
     try {
       tx(db, () => {
         db.prepare('INSERT INTO pages (id, wiki_id, name, content, version, created_at, updated_at, updated_by) VALUES (?, ?, ?, ?, 1, ?, ?, ?)').run(id, wikiId, name, content, now, now, uid)
-        db.prepare('INSERT INTO page_revisions (page_id, version, content, created_at, created_by) VALUES (?, 1, ?, ?, ?)').run(id, content, now, uid)
+        db.prepare('INSERT INTO page_revisions (page_id, version, content, created_at, created_by, via) VALUES (?, 1, ?, ?, ?, ?)').run(id, content, now, uid, via)
         // A real page now owns this name; drop any alias that pointed elsewhere.
         db.prepare('DELETE FROM page_aliases WHERE wiki_id = ? AND name = ?').run(wikiId, name)
       })
     } catch (e) {
-      if (String(e).includes('UNIQUE')) return c.json({ error: 'exists' }, 409)
+      if (String(e).includes('UNIQUE')) return { error: 'exists' as const }
       throw e
     }
-    return c.json({ page: pageRow(wikiId, id) }, 201)
+    return { page: pageRow(wikiId, id)! }
+  }
+  app.post('/api/wikis/:wid/pages', async (c) => {
+    const { wikiId } = need(c, 'editor')
+    const b = await body<{ name?: string; content?: string }>(c)
+    const r = createPage(wikiId, c.get('user').id, b.name ?? '', typeof b.content === 'string' ? b.content : '')
+    if ('error' in r) return c.json({ error: r.error }, r.error === 'exists' ? 409 : r.error === 'too_large' ? 413 : 400)
+    return c.json({ page: r.page }, 201)
   })
 
   /** Optimistic concurrency: the client sends the version it edited from. */
@@ -640,16 +648,21 @@ export function createApp(db: DB, cfg: AppConfig) {
     if (typeof b.content !== 'string' || typeof b.baseVersion !== 'number') return c.json({ error: 'invalid' }, 400)
     // Shown in the history ("AI の提案を採用", "復元"); anything else is ordinary typing.
     const via = b.via === 'ai' || b.via === 'restore' ? b.via : null
-    if (b.content.length > MAX_CONTENT) return c.json({ error: 'too_large' }, 413)
-    const pid = c.req.param('pid')
-    const uid = c.get('user').id
-    const content = b.content
-    const result = tx(db, () => {
+    const result = savePage(wikiId, c.req.param('pid'), c.get('user').id, b.content, b.baseVersion, via)
+    if (result.status === 413) return c.json({ error: 'too_large' }, 413)
+    if (result.status === 404) return c.json({ error: 'not_found' }, 404)
+    if (result.status === 409) return c.json({ error: 'conflict', current: result.current, base: result.base }, 409)
+    return c.json({ page: result.page })
+  })
+
+  function savePage(wikiId: string, pid: string, uid: string, content: string, baseVersion: number, via: string | null) {
+    if (content.length > MAX_CONTENT) return { status: 413 as const }
+    return tx(db, () => {
       const cur = pageRow(wikiId, pid)
       if (!cur) return { status: 404 as const }
-      if (cur.version !== b.baseVersion) {
+      if (cur.version !== baseVersion) {
         if (cur.content === content) return { status: 200 as const, page: cur } // same text: no conflict
-        const base = db.prepare('SELECT content FROM page_revisions WHERE page_id = ? AND version = ?').get(pid, b.baseVersion as number) as { content: string } | undefined
+        const base = db.prepare('SELECT content FROM page_revisions WHERE page_id = ? AND version = ?').get(pid, baseVersion) as { content: string } | undefined
         return { status: 409 as const, current: cur, base: base?.content ?? null }
       }
       if (cur.content === content) return { status: 200 as const, page: cur }
@@ -659,10 +672,7 @@ export function createApp(db: DB, cfg: AppConfig) {
       db.prepare('INSERT INTO page_revisions (page_id, version, content, created_at, created_by, via) VALUES (?, ?, ?, ?, ?, ?)').run(pid, v, content, now, uid, via)
       return { status: 200 as const, page: pageRow(wikiId, pid)! }
     })
-    if (result.status === 404) return c.json({ error: 'not_found' }, 404)
-    if (result.status === 409) return c.json({ error: 'conflict', current: result.current, base: result.base }, 409)
-    return c.json({ page: result.page })
-  })
+  }
 
   /**
    * AI suggestion for part of a page.  The client sends its current text (it may hold
@@ -946,6 +956,37 @@ export function createApp(db: DB, cfg: AppConfig) {
     const r = db.prepare('DELETE FROM pages WHERE wiki_id = ? AND id = ?').run(wikiId, c.req.param('pid'))
     if (!r.changes) return c.json({ error: 'not_found' }, 404)
     return c.json({ ok: true })
+  })
+
+  // ---- MCP server per wiki (+ the OAuth authorization server its clients use)
+
+  mountMcp(app, db, {
+    appOrigin: cfg.appOrigin,
+    resolveWikiId,
+    roleOf,
+    wiki: (id) => db.prepare('SELECT id, name, slug FROM wikis WHERE id = ?').get(id) as { id: string; name: string; slug: string },
+    userWikis: (uid) =>
+      db.prepare('SELECT w.id, w.name, w.slug, m.role FROM wikis w JOIN memberships m ON m.wiki_id = w.id WHERE m.user_id = ? ORDER BY w.created_at').all(uid) as {
+        id: string
+        name: string
+        slug: string
+        role: Role
+      }[],
+    listPages: (wikiId) =>
+      db
+        .prepare('SELECT p.name, p.updated_at AS updatedAt, u.name AS updatedByName FROM pages p LEFT JOIN users u ON u.id = p.updated_by WHERE p.wiki_id = ? ORDER BY p.name')
+        .all(wikiId) as { name: string; updatedAt: number; updatedByName: string | null }[],
+    findPage: (wikiId, raw) => {
+      const name = normalizePageName(raw)
+      const id =
+        (db.prepare('SELECT id FROM pages WHERE wiki_id = ? AND name = ?').get(wikiId, name) as { id: string } | undefined)?.id ??
+        (db.prepare('SELECT page_id AS id FROM page_aliases WHERE wiki_id = ? AND name = ?').get(wikiId, name) as { id: string } | undefined)?.id
+      return (id && (pageRow(wikiId, id) as PageInfo | undefined)) || null
+    },
+    search: (wikiId, q) => searchPages(wikiId, q).results.map((r) => ({ name: r.name, snippet: r.snippet ?? '', updatedAt: r.updatedAt })),
+    createPage: (wikiId, uid, name, content) => createPage(wikiId, uid, name, content, 'mcp'),
+    savePage: (wikiId, pid, uid, content, base, via) => savePage(wikiId, pid, uid, content, base, via) as SaveResult | { status: 413 },
+    sessionUser: (c) => sessionUser(db, c),
   })
 
   app.all('/api/*', (c) => c.json({ error: 'not_found' }, 404))

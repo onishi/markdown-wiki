@@ -10,6 +10,7 @@ import { WikiHome } from './wiki/WikiHome'
 import { WikiSettings } from './wiki/WikiSettings'
 import { RecentChanges } from './wiki/RecentChanges'
 import { Attachments } from './wiki/Attachments'
+import { Connect } from './wiki/Connect'
 import { PublicPage } from './wiki/PublicPage'
 import { fullTime, relTime } from './time'
 
@@ -59,6 +60,7 @@ function Authed() {
     <SessionCtx.Provider value={{ me, setMe, logout }}>
       <Routes>
         <Route path="/" element={<Home />} />
+        <Route path="/connect" element={<Connect />} />
         <Route path="/w/:wid" element={<WikiLayout />}>
           <Route index element={<WikiHome />} />
           <Route path="p/*" element={<PageRoute />} />
