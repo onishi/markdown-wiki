@@ -495,6 +495,7 @@ mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0 1px; 
 .help-syntax th, .help-syntax td, .help-roles th, .help-roles td { border: 1px solid var(--border); padding: 6px 10px; text-align: left; vertical-align: top; }
 .help-syntax pre { margin: 0; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
 .help-roles th { white-space: nowrap; width: 6em; }
+.help-mcp th { width: 11em; white-space: normal; }
 .help-page .help { max-height: none; overflow: visible; }
 .check-row { display: flex; gap: 8px; align-items: center; font-size: 14px; }
 .ai-dialog { display: flex; flex-direction: column; gap: 10px; }
