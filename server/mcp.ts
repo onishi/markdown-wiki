@@ -22,6 +22,8 @@ import type { Role } from './app.js'
 const ACCESS_TTL = 3600 * 1000
 const REFRESH_TTL = 60 * 86400 * 1000
 const CODE_TTL = 10 * 60 * 1000
+/** read_image: larger images are refused (clients cap image size; base64 adds a third). */
+const MAX_IMAGE = 5 * 1024 * 1024
 const PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05']
 export const SCOPES = ['wiki:read', 'wiki:write'] as const
 export type Access = 'read' | 'write'
@@ -49,6 +51,18 @@ export interface WikiOps {
   search(wikiId: string, q: string): { name: string; snippet: string; updatedAt: number }[]
   createPage(wikiId: string, userId: string, name: string, content: string): { page: PageInfo } | { error: 'exists' | 'invalid_name' | 'too_large' }
   savePage(wikiId: string, pageId: string, userId: string, content: string, baseVersion: number, via: string | null): SaveResult | { status: 413 }
+  renamePage(
+    wikiId: string,
+    pageId: string,
+    userId: string,
+    newName: string,
+    includeChildren: boolean,
+    rewriteLinks: boolean,
+  ): { error: string; name?: string } | { renamed: { from: string; to: string }[]; rewritten: number; page: PageInfo }
+  deletePage(wikiId: string, pageId: string): boolean
+  readFile(wikiId: string, fileId: string): { name: string; type: string; size: number; bytes: Uint8Array } | null
+  /** The owner can turn MCP off for a wiki. */
+  mcpEnabled(wikiId: string): boolean
   sessionUser(c: Context): User | null
 }
 
@@ -227,11 +241,12 @@ export function mountMcp(app: Hono<any>, db: DB, ops: WikiOps) {
       const id = ops.resolveWikiId(a.wikiParam)
       wiki = wikis.find((w) => w.id === id) ?? null
       if (!wiki) return c.json({ error: 'not_member', message: 'この wiki のメンバーではないため接続できません。' }, 403)
+      if (!ops.mcpEnabled(wiki.id)) return c.json({ error: 'mcp_disabled', message: 'この wiki では、オーナーが AI アプリからの接続（MCP）を止めています。' }, 403)
     }
     return c.json({
       client: { name: a.clientName, redirectHost: redirectLabel(a.redirectUri) },
       wiki,
-      wikis: wiki ? [] : wikis,
+      wikis: wiki ? [] : wikis.filter((w) => ops.mcpEnabled(w.id)),
       wantsWrite: a.wantsWrite,
       denyUrl: withParams(a.redirectUri, { error: 'access_denied', state: a.state, iss: issuer }),
     })
@@ -246,6 +261,7 @@ export function mountMcp(app: Hono<any>, db: DB, ops: WikiOps) {
     const wikiId = a.wikiParam ? ops.resolveWikiId(a.wikiParam) : (b.wikiId ?? null)
     const role = wikiId ? ops.roleOf(u.id, wikiId) : null
     if (!wikiId || !role) return c.json({ error: 'not_member' }, 403)
+    if (!ops.mcpEnabled(wikiId)) return c.json({ error: 'mcp_disabled' }, 403)
     const access: Access = b.access === 'write' && role !== 'viewer' ? 'write' : 'read'
     const code = randomToken()
     db.prepare(
@@ -351,6 +367,8 @@ export function mountMcp(app: Hono<any>, db: DB, ops: WikiOps) {
     if (!g.last_used_at || Date.now() - g.last_used_at > 60_000) db.prepare('UPDATE oauth_grants SET last_used_at = ? WHERE id = ?').run(Date.now(), g.id)
 
     if (c.req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405, { allow: 'POST' })
+    if (!ops.mcpEnabled(g.wiki_id))
+      return json({ jsonrpc: '2.0', id: null, error: { code: -32001, message: 'この wiki では、オーナーが AI アプリからの接続（MCP）を止めています。' } }, 403)
     let msg: unknown
     try {
       msg = await c.req.json()
@@ -438,6 +456,7 @@ function instructions(wikiName: string, canWrite: boolean) {
     `This server is the Markdown Wiki "${wikiName}". Pages are Markdown documents, mostly written in Japanese.`,
     'Page names may contain "/" to form a hierarchy (e.g. "開発/API/認証"); a parent need not exist as a page.',
     'Link to other pages with [[ページ名]] or [[ページ名|表示テキスト]]. Use search to find pages before creating new ones, to avoid duplicates.',
+    'Images in pages look like ![説明](/api/wikis/…/files/…); use read_image with that URL to see one.',
     canWrite
       ? 'To change a page, read it first, then use edit_page for targeted replacements or update_page with the base_version you read to rewrite it. Every change is kept in the page history.'
       : 'This connection is read-only.',
@@ -530,6 +549,26 @@ const TOOLS: Tool[] = [
     },
   },
   {
+    name: 'read_image',
+    title: '画像を見る',
+    description: 'Fetch an image uploaded to this wiki, given its URL as written in a page (e.g. "/api/wikis/<id>/files/<id>"), so you can look at it.',
+    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'The image URL from the page Markdown' } }, required: ['url'] },
+    annotations: READ,
+    write: false,
+    run(a, ctx) {
+      const fid = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?(?:[?#].*)?$/i.exec(str(a, 'url').trim())?.[1]
+      const f = fid ? ctx.ops.readFile(ctx.wikiId, fid.toLowerCase()) : null
+      if (!f) throw new ToolError('この wiki の画像が見つかりません。ページに書かれている画像の URL（/api/wikis/…/files/…）を指定してください。')
+      if (f.size > MAX_IMAGE) throw new ToolError(`画像が大きすぎます（${(f.size / 1024 / 1024).toFixed(1)} MB、上限 ${MAX_IMAGE / 1024 / 1024} MB）。`)
+      return {
+        content: [
+          { type: 'image', data: Buffer.from(f.bytes).toString('base64'), mimeType: f.type },
+          { type: 'text', text: `${f.name}（${f.type}、${Math.max(1, Math.round(f.size / 1024))} KB）` },
+        ],
+      }
+    },
+  },
+  {
     name: 'recent_changes',
     title: '最近の更新',
     description: 'Pages most recently updated, newest first.',
@@ -614,6 +653,64 @@ const TOOLS: Tool[] = [
       const base = Number(a.base_version)
       if (!Number.isInteger(base)) throw new ToolError('base_version（read_page で得た版番号）が必要です。')
       return saved(ctx, ctx.ops.savePage(ctx.wikiId, p.id, ctx.userId, str(a, 'content'), base, 'mcp'), '更新しました。')
+    },
+  },
+  {
+    name: 'rename_page',
+    title: 'ページの名前を変える',
+    description:
+      'Rename (or move, by changing the "/" path) a page. Its child pages move with it unless include_children is false. The old names keep working as aliases. With rewrite_links (default true), [[links]] to the old names in other pages are rewritten to the new names.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Current page name' },
+        new_name: { type: 'string' },
+        include_children: { type: 'boolean', description: 'Move child pages too (default true)' },
+        rewrite_links: { type: 'boolean', description: 'Rewrite [[links]] in other pages (default true)' },
+      },
+      required: ['name', 'new_name'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    write: true,
+    run(a, ctx) {
+      const p = mustFind(ctx, str(a, 'name'))
+      const r = ctx.ops.renamePage(ctx.wikiId, p.id, ctx.userId, str(a, 'new_name'), a.include_children !== false, a.rewrite_links !== false)
+      if ('error' in r) {
+        const msg: Record<string, string> = {
+          exists: `「${r.name}」という名前のページがすでにあります。`,
+          into_self: '自分の下の階層には移動できません。',
+          invalid_name: '新しいページ名が正しくありません。',
+          not_found: 'ページが見つかりません。',
+        }
+        throw new ToolError(msg[r.error] ?? '名前を変えられませんでした。')
+      }
+      if (!r.renamed.length) return text('名前は変わっていません（同じ名前です）。')
+      return text(
+        `名前を変えました。\n${r.renamed.map((x) => `- ${x.from} → ${x.to}`).join('\n')}\n` +
+          (r.rewritten ? `ほかの ${r.rewritten} ページのリンクを書き換えました。\n` : '') +
+          pageHeader(ctx, r.page),
+      )
+    },
+  },
+  {
+    name: 'delete_page',
+    title: 'ページを削除する',
+    description:
+      'Delete a page permanently, together with its history (this cannot be undone). Child pages are kept. base_version must be the version you read, so you only delete what you have seen. Ask the user before deleting.',
+    inputSchema: {
+      type: 'object',
+      properties: { name: { type: 'string' }, base_version: { type: 'number', description: 'The version from read_page' } },
+      required: ['name', 'base_version'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    write: true,
+    run(a, ctx) {
+      const p = mustFind(ctx, str(a, 'name'))
+      const base = Number(a.base_version)
+      if (!Number.isInteger(base)) throw new ToolError('base_version（read_page で得た版番号）が必要です。')
+      if (base !== p.version) throw new ToolError(`ページはその間に更新されています（現在の版: ${p.version}）。read_page で読み直してから判断してください。`)
+      if (!ctx.ops.deletePage(ctx.wikiId, p.id)) throw new ToolError('ページが見つかりません。')
+      return text(`「${p.name}」を削除しました（履歴も含めて元に戻せません）。`)
     },
   },
 ]

@@ -279,14 +279,14 @@ export function createApp(db: DB, cfg: AppConfig) {
   app.get('/api/wikis/:wid', (c) => {
     const { wikiId, role } = need(c, 'viewer')
     const w = db
-      .prepare('SELECT w.id, w.slug, w.name, w.ai_enabled AS aiEnabled, p.id AS topPageId, p.name AS topPage FROM wikis w LEFT JOIN pages p ON p.id = w.top_page_id WHERE w.id = ?')
-      .get(wikiId) as { aiEnabled: number }
-    return c.json({ wiki: { ...w, aiEnabled: !!w.aiEnabled, aiAvailable: !!cfg.ai, role } })
+      .prepare('SELECT w.id, w.slug, w.name, w.ai_enabled AS aiEnabled, w.mcp_enabled AS mcpEnabled, p.id AS topPageId, p.name AS topPage FROM wikis w LEFT JOIN pages p ON p.id = w.top_page_id WHERE w.id = ?')
+      .get(wikiId) as { aiEnabled: number; mcpEnabled: number }
+    return c.json({ wiki: { ...w, aiEnabled: !!w.aiEnabled, mcpEnabled: !!w.mcpEnabled, aiAvailable: !!cfg.ai, role } })
   })
 
   app.patch('/api/wikis/:wid', async (c) => {
     const { wikiId } = need(c, 'owner')
-    const b = await body<{ name?: string; slug?: string; topPageId?: string | null; aiEnabled?: boolean }>(c)
+    const b = await body<{ name?: string; slug?: string; topPageId?: string | null; aiEnabled?: boolean; mcpEnabled?: boolean }>(c)
     // Validate everything first so a rejected request changes nothing.
     const name = b.name?.trim()
     if (name !== undefined && (!name || name.length > 100)) return c.json({ error: 'invalid_name' }, 400)
@@ -300,6 +300,7 @@ export function createApp(db: DB, cfg: AppConfig) {
       if (name !== undefined) db.prepare('UPDATE wikis SET name = ? WHERE id = ?').run(name, wikiId)
       if (b.topPageId !== undefined) db.prepare('UPDATE wikis SET top_page_id = ? WHERE id = ?').run(b.topPageId, wikiId)
       if (typeof b.aiEnabled === 'boolean') db.prepare('UPDATE wikis SET ai_enabled = ? WHERE id = ?').run(b.aiEnabled ? 1 : 0, wikiId)
+      if (typeof b.mcpEnabled === 'boolean') db.prepare('UPDATE wikis SET mcp_enabled = ? WHERE id = ?').run(b.mcpEnabled ? 1 : 0, wikiId)
       const old = (db.prepare('SELECT slug FROM wikis WHERE id = ?').get(wikiId) as { slug: string }).slug
       if (slug !== undefined && slug !== old) {
         // The old slug keeps redirecting; reclaiming one of this wiki's former slugs is allowed.
@@ -790,18 +791,23 @@ export function createApp(db: DB, cfg: AppConfig) {
   app.post('/api/wikis/:wid/pages/:pid/rename', async (c) => {
     const { wikiId } = need(c, 'editor')
     const b = await body<{ name?: string; includeChildren?: boolean; rewriteLinks?: boolean }>(c)
-    const newName = validatePageName(b.name ?? '')
-    if (!newName) return c.json({ error: 'invalid_name' }, 400)
-    const pid = c.req.param('pid')
-    const uid = c.get('user').id
+    const r = renamePage(wikiId, c.req.param('pid'), c.get('user').id, b.name ?? '', b.includeChildren !== false, !!b.rewriteLinks)
+    if ('error' in r) return c.json(r, r.error === 'not_found' ? 404 : r.error === 'exists' ? 409 : 400)
+    return c.json(r)
+  })
+
+  /** Rename a page (and its children): old names stay as aliases; optionally rewrite [[links]]. */
+  function renamePage(wikiId: string, pid: string, uid: string, rawName: string, includeChildren: boolean, rewriteLinks: boolean) {
+    const newName = validatePageName(rawName)
+    if (!newName) return { error: 'invalid_name' as const }
     const page = pageRow(wikiId, pid)
-    if (!page) return c.json({ error: 'not_found' }, 404)
+    if (!page) return { error: 'not_found' as const }
     const oldName = page.name
-    if (newName === oldName) return c.json({ renamed: [], rewritten: 0 })
-    if (newName.startsWith(oldName + '/')) return c.json({ error: 'into_self' }, 400)
+    if (newName === oldName) return { renamed: [], rewritten: 0, page }
+    if (newName.startsWith(oldName + '/')) return { error: 'into_self' as const }
 
     const targets: { id: string; name: string }[] = [{ id: pid, name: oldName }]
-    if (b.includeChildren !== false) {
+    if (includeChildren) {
       targets.push(
         ...(db.prepare(`SELECT id, name FROM pages WHERE wiki_id = ? AND ${UNDER}`).all(wikiId, `${oldName}/`, `${oldName}/`) as {
           id: string
@@ -813,7 +819,7 @@ export function createApp(db: DB, cfg: AppConfig) {
     const movingIds = new Set(targets.map((t) => t.id))
     for (const to of renames.values()) {
       const clash = db.prepare('SELECT id FROM pages WHERE wiki_id = ? AND name = ?').get(wikiId, to) as { id: string } | undefined
-      if (clash && !movingIds.has(clash.id)) return c.json({ error: 'exists', name: to }, 409)
+      if (clash && !movingIds.has(clash.id)) return { error: 'exists' as const, name: to }
     }
     let rewritten = 0
     tx(db, () => {
@@ -826,7 +832,7 @@ export function createApp(db: DB, cfg: AppConfig) {
         db.prepare('INSERT INTO page_aliases (wiki_id, name, page_id) VALUES (?, ?, ?) ON CONFLICT(wiki_id, name) DO UPDATE SET page_id = excluded.page_id').run(wikiId, t.name, t.id)
         db.prepare('DELETE FROM page_aliases WHERE wiki_id = ? AND name = ?').run(wikiId, to)
       }
-      if (b.rewriteLinks) {
+      if (rewriteLinks) {
         const all = db.prepare('SELECT id, content, version FROM pages WHERE wiki_id = ?').all(wikiId) as { id: string; content: string; version: number }[]
         for (const p of all) {
           const next = rewriteWikiLinks(p.content, renames)
@@ -837,8 +843,8 @@ export function createApp(db: DB, cfg: AppConfig) {
         }
       }
     })
-    return c.json({ renamed: [...renames].map(([from, to]) => ({ from, to })), rewritten, page: pageRow(wikiId, pid) })
-  })
+    return { renamed: [...renames].map(([from, to]) => ({ from, to })), rewritten, page: pageRow(wikiId, pid)! }
+  }
 
   // ---- files (images)
 
@@ -882,6 +888,21 @@ export function createApp(db: DB, cfg: AppConfig) {
     return c.json({ files: files.map((f) => ({ ...f, url: `/api/wikis/${wikiId}/files/${f.id}`, pages: refs.get(f.id) ?? [] })) })
   })
 
+  function readFile(wikiId: string, fid: string) {
+    const f = db.prepare('SELECT id, name, type, size FROM files WHERE wiki_id = ? AND id = ?').get(wikiId, fid) as
+      | { id: string; name: string; type: string; size: number }
+      | undefined
+    if (!f) return null
+    const bytes = new Uint8Array(f.size)
+    let at = 0
+    for (const ch of db.prepare('SELECT data FROM file_chunks WHERE file_id = ? ORDER BY seq').all(f.id) as { data: Uint8Array | ArrayBuffer }[]) {
+      const d = ch.data instanceof Uint8Array ? ch.data : new Uint8Array(ch.data)
+      bytes.set(d, at)
+      at += d.length
+    }
+    return { ...f, bytes }
+  }
+
   app.get('/api/wikis/:wid/files/:fid', (c) => {
     const fid = c.req.param('fid')
     const u = c.get('user') as User | undefined
@@ -890,17 +911,9 @@ export function createApp(db: DB, cfg: AppConfig) {
     const member = !!u && !!roleOf(u.id, wikiId)
     if (!member && !db.prepare('SELECT 1 FROM pages WHERE wiki_id = ? AND published_at IS NOT NULL AND instr(content, ?) > 0').get(wikiId, `/files/${fid}`))
       return c.json({ error: 'not_found' }, 404)
-    const f = db.prepare('SELECT id, name, type, size FROM files WHERE wiki_id = ? AND id = ?').get(wikiId, fid) as
-      | { id: string; name: string; type: string; size: number }
-      | undefined
+    const f = readFile(wikiId, fid)
     if (!f) return c.json({ error: 'not_found' }, 404)
-    const out = new Uint8Array(f.size)
-    let at = 0
-    for (const ch of db.prepare('SELECT data FROM file_chunks WHERE file_id = ? ORDER BY seq').all(f.id) as { data: Uint8Array | ArrayBuffer }[]) {
-      const d = ch.data instanceof Uint8Array ? ch.data : new Uint8Array(ch.data)
-      out.set(d, at)
-      at += d.length
-    }
+    const out = f.bytes
     return new Response(out, {
       headers: {
         'content-type': f.type,
@@ -986,6 +999,10 @@ export function createApp(db: DB, cfg: AppConfig) {
     search: (wikiId, q) => searchPages(wikiId, q).results.map((r) => ({ name: r.name, snippet: r.snippet ?? '', updatedAt: r.updatedAt })),
     createPage: (wikiId, uid, name, content) => createPage(wikiId, uid, name, content, 'mcp'),
     savePage: (wikiId, pid, uid, content, base, via) => savePage(wikiId, pid, uid, content, base, via) as SaveResult | { status: 413 },
+    renamePage: (wikiId, pid, uid, name, children, links) => renamePage(wikiId, pid, uid, name, children, links),
+    deletePage: (wikiId, pid) => db.prepare('DELETE FROM pages WHERE wiki_id = ? AND id = ?').run(wikiId, pid).changes > 0,
+    readFile,
+    mcpEnabled: (wikiId) => !!(db.prepare('SELECT mcp_enabled FROM wikis WHERE id = ?').get(wikiId) as { mcp_enabled: number } | undefined)?.mcp_enabled,
     sessionUser: (c) => sessionUser(db, c),
   })
 

@@ -24,11 +24,15 @@ Markdown Wiki は wiki ごとに MCP（Model Context Protocol）サーバーを�
 | --- | --- | --- | --- |
 | `list_pages` | 読む | `prefix?` | ページ名、最終更新日時、更新した人の一覧（名前順）。`prefix`（例 `開発/`）で始まるものだけに絞れる |
 | `read_page` | 読む | `name` | ページの Markdown 本文。先頭に名前、版番号、更新日時と更新した人、URL を付ける。変更前の名前でも見つかる |
+| `read_image` | 読む | `url` | ページに書かれた画像 URL（`/api/wikis/<id>/files/<id>`、ホスト付きでも可）の画像を `image` コンテンツ（base64）で返す。この wiki の画像だけで、5 MB まで |
 | `search` | 読む | `query` | ページ名と本文の全文検索。空白で区切った語をすべて含むページを、新しい順に最大 50 件、抜粋付きで返す |
 | `recent_changes` | 読む | `limit?`（1〜100、既定 20） | 最近更新されたページの一覧 |
 | `create_page` | 書く | `name`、`content` | ページを新しく作る。同じ名前のページがあるときはエラー |
 | `edit_page` | 書く | `name`、`old_text`、`new_text`、`replace_all?` | 本文中の `old_text` を `new_text` に置き換える。`old_text` が見つからないときや、2 か所以上あるのに `replace_all` でないときはエラー。`old_text` が空なら、`new_text` を末尾に足す |
 | `update_page` | 書く | `name`、`content`、`base_version` | 本文全体を置き換える。`base_version`（`read_page` で得た版）がいまの版と違えば保存せず、読み直すよう求めるエラーを返す（同じ内容なら成功） |
+
+| `rename_page` | 書く | `name`、`new_name`、`include_children?`（既定 true）、`rewrite_links?`（既定 true） | 名前（階層）を変える。下の階層のページも一緒に移す。古い名前は別名として残り、`rewrite_links` ならほかのページの `[[リンク]]` も書き換える（履歴には「リンク更新」と残る）。同じ名前のページがある、または自分の下に移そうとするとエラー |
+| `delete_page` | 書く | `name`、`base_version` | ページを履歴ごと削除する（元に戻せない）。下の階層のページは残す。`base_version` がいまの版と違えばエラー。説明文で、削除の前に利用者に確認するよう AI に求めている |
 
 - 「書く」ツールは、書き込みが許された接続にだけ `tools/list` で見せます（下の「権限」を参照）。
 - 各ツールには MCP のヒント（`readOnlyHint`、`destructiveHint` など）を付けています。
@@ -37,7 +41,6 @@ Markdown Wiki は wiki ごとに MCP（Model Context Protocol）サーバーを�
 
 ### MCP からできないこと
 
-- ページの削除と名前の変更
 - ページの公開と非公開
 - 画像のアップロード
 - 履歴の閲覧と復元
@@ -53,6 +56,10 @@ Markdown Wiki は wiki ごとに MCP（Model Context Protocol）サーバーを�
   - 閲覧者に変わると、書くツールが消えます。
 - 利用者は「共有設定・メンバー」の「あなたが接続しているアプリ」で接続を一覧し、取り消せます。取り消すと、アクセストークンもリフレッシュトークンも無効になります。
 - 別の wiki のエンドポイントにトークンを使うと 401 を返します。
+- オーナーは「共有設定・メンバー」で wiki ごとに MCP を止められます（`wikis.mcp_enabled`、既定はオン）。
+  - 止めている間は、MCP エンドポイントが 403（JSON-RPC エラー -32001）を返します。
+  - 新しい接続の許可もできません。止めている wiki は、同意画面の wiki の選択肢にも出ません。
+  - 接続（グラント）は消さないので、もう一度有効にすれば、そのまま使えるようになります。
 
 ## OAuth
 

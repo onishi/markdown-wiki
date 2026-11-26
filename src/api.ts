@@ -44,6 +44,8 @@ export interface WikiSummary {
   /** AI suggestions: enabled for this wiki by its owner / configured on the server. */
   aiEnabled?: boolean
   aiAvailable?: boolean
+  /** AI apps may connect over MCP (the owner can turn it off). */
+  mcpEnabled?: boolean
   pageCount?: number
   memberCount?: number
 }
