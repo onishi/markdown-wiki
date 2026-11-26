@@ -148,6 +148,8 @@ function migrate(db: DB) {
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS wikis_slug ON wikis(slug)')
   // AI suggestions send page text to an external API, so each wiki opts in (owner).
   if (!cols.includes('ai_enabled')) db.exec('ALTER TABLE wikis ADD COLUMN ai_enabled INTEGER NOT NULL DEFAULT 0')
+  // MCP access (members connect AI apps with OAuth); on unless the owner turns it off.
+  if (!cols.includes('mcp_enabled')) db.exec('ALTER TABLE wikis ADD COLUMN mcp_enabled INTEGER NOT NULL DEFAULT 1')
   // How a revision was made: null (typing), 'ai' (an AI suggestion was accepted), 'restore', 'rename' (link rewrite).
   const rcols = (db.prepare('PRAGMA table_info(page_revisions)').all() as { name: string }[]).map((c) => c.name)
   if (!rcols.includes('via')) db.exec('ALTER TABLE page_revisions ADD COLUMN via TEXT')

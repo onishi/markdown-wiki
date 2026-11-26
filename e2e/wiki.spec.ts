@@ -1147,6 +1147,16 @@ test('MCP: an app connects through login + consent, uses the tools, and can be r
   await owner.getByTestId('mcp-revoke').click()
   await expect(owner.getByTestId('mcp-grants')).toHaveCount(0)
   expect((await page.request.post(`/mcp/${slug}`, { headers: { authorization: `Bearer ${tok.access_token}` }, data: { jsonrpc: '2.0', id: 2, method: 'ping' } })).status()).toBe(401)
+
+  // The owner can turn MCP off for the wiki.
+  owner.once('dialog', (d) => d.accept())
+  await owner.getByTestId('mcp-enabled').click()
+  await expect(owner.getByTestId('mcp-disabled')).toBeVisible()
+  await expect(owner.getByTestId('mcp-url')).toHaveCount(0)
+  await owner.reload()
+  await expect(owner.getByTestId('mcp-enabled')).not.toBeChecked()
+  await owner.getByTestId('mcp-enabled').click()
+  await expect(owner.getByTestId('mcp-url')).toBeVisible()
   await ctx.close()
   await owner.context().close()
 })

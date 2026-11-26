@@ -148,7 +148,7 @@ describe('MCP server with OAuth', () => {
     expect(note.status).toBe(202)
 
     const tools = (await rpc(app, 'team', access, 'tools/list')).json.result.tools.map((t: { name: string }) => t.name)
-    expect(tools).toEqual(['list_pages', 'read_page', 'search', 'recent_changes', 'create_page', 'edit_page', 'update_page'])
+    expect(tools).toEqual(['list_pages', 'read_page', 'search', 'read_image', 'recent_changes', 'create_page', 'edit_page', 'update_page', 'rename_page', 'delete_page'])
 
     expect((await call(app, 'team', access, 'list_pages', {})).text).toContain('- 開発/API')
     const read = await call(app, 'team', access, 'read_page', { name: '開発/API' })
@@ -229,7 +229,7 @@ describe('MCP server with OAuth', () => {
     await wikiWithPage(alice)
     const ro = await connect(app, alice, 'team', 'read')
     const tools = (await rpc(app, 'team', ro.access, 'tools/list')).json.result.tools.map((x: { name: string }) => x.name)
-    expect(tools).toEqual(['list_pages', 'read_page', 'search', 'recent_changes'])
+    expect(tools).toEqual(['list_pages', 'read_page', 'search', 'read_image', 'recent_changes'])
     expect((await call(app, 'team', ro.access, 'edit_page', { name: '開発/API', old_text: 'OAuth', new_text: 'x' })).isError).toBe(true)
 
     // someone outside the wiki cannot approve access to it
@@ -242,5 +242,74 @@ describe('MCP server with OAuth', () => {
     const info = (await alice.get(`/api/oauth/request?${q2}`)).json
     expect(info.wiki).toBeNull()
     expect(info.wikis.map((x: { slug: string }) => x.slug)).toEqual(['team'])
+  })
+})
+
+describe('MCP: rename, delete, images, owner switch', () => {
+  it('rename_page moves children and rewrites links; delete_page needs the version read', async () => {
+    const app = setup()
+    const alice = await login(app, 'alice@example.com')
+    const w = await wikiWithPage(alice)
+    await alice.post(`/api/wikis/${w.id}/pages`, { name: '開発/API/認証', content: 'OAuth' })
+    await alice.post(`/api/wikis/${w.id}/pages`, { name: 'Home', content: '[[開発/API]] と [[開発/API/認証]]' })
+    const { access } = await connect(app, alice, 'team')
+    const tools = (await rpc(app, 'team', access, 'tools/list')).json.result.tools.map((t: { name: string }) => t.name)
+    expect(tools).toEqual(expect.arrayContaining(['rename_page', 'delete_page', 'read_image']))
+
+    const rn = await call(app, 'team', access, 'rename_page', { name: '開発/API', new_name: '設計/API' })
+    expect(rn.text).toContain('- 開発/API → 設計/API')
+    expect(rn.text).toContain('- 開発/API/認証 → 設計/API/認証')
+    expect(rn.text).toContain('ほかの 1 ページのリンクを書き換えました')
+    expect((await call(app, 'team', access, 'read_page', { name: 'Home' })).text).toContain('[[設計/API]] と [[設計/API/認証]]')
+    expect((await call(app, 'team', access, 'read_page', { name: '開発/API' })).text).toContain('name: 設計/API') // old name = alias
+    expect((await call(app, 'team', access, 'rename_page', { name: '設計/API', new_name: 'Home' })).text).toContain('すでにあります')
+
+    expect((await call(app, 'team', access, 'delete_page', { name: '設計/API/認証', base_version: 99 })).isError).toBe(true)
+    expect((await call(app, 'team', access, 'delete_page', { name: '設計/API/認証', base_version: 1 })).text).toContain('削除しました')
+    expect((await call(app, 'team', access, 'read_page', { name: '設計/API/認証' })).isError).toBe(true)
+  })
+
+  it('read_image returns the image of this wiki only', async () => {
+    const app = setup()
+    const alice = await login(app, 'alice@example.com')
+    const w = await wikiWithPage(alice)
+    const other = (await alice.post('/api/wikis', { name: '別', slug: 'other' })).json.wiki
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4])
+    const res = await app.request(`/api/wikis/${other.id}/files?name=x.png`, {
+      method: 'POST',
+      headers: { cookie: (await app.request('/auth/dev-login?email=alice@example.com')).headers.get('set-cookie')!.split(';')[0], 'x-requested-with': 'markdown-wiki' },
+      body: png,
+    })
+    const otherUrl = ((await res.json()) as any).file.url as string
+    const up = await app.request(`/api/wikis/${w.id}/files?name=${encodeURIComponent('図.png')}`, {
+      method: 'POST',
+      headers: { cookie: (await app.request('/auth/dev-login?email=alice@example.com')).headers.get('set-cookie')!.split(';')[0], 'x-requested-with': 'markdown-wiki' },
+      body: png,
+    })
+    const url = ((await up.json()) as any).file.url as string
+    const { access } = await connect(app, alice, 'team')
+    const r = await rpc(app, 'team', access, 'tools/call', { name: 'read_image', arguments: { url: `${ORIGIN}${url}` } })
+    expect(r.json.result.content[0]).toEqual({ type: 'image', data: Buffer.from(png).toString('base64'), mimeType: 'image/png' })
+    expect(r.json.result.content[1].text).toContain('図.png')
+    expect((await call(app, 'team', access, 'read_image', { url: otherUrl })).isError).toBe(true) // another wiki's image
+  })
+
+  it('the owner can turn MCP off: requests and new connections are refused until turned on again', async () => {
+    const app = setup()
+    const alice = await login(app, 'alice@example.com')
+    const w = await wikiWithPage(alice)
+    const { access } = await connect(app, alice, 'team')
+    expect((await alice.get(`/api/wikis/${w.id}`)).json.wiki.mcpEnabled).toBe(true)
+    await alice.call('PATCH', `/api/wikis/${w.id}`, { mcpEnabled: false })
+    expect((await alice.get(`/api/wikis/${w.id}`)).json.wiki.mcpEnabled).toBe(false)
+    const off = await rpc(app, 'team', access, 'ping')
+    expect(off.status).toBe(403)
+    expect(off.json.error.message).toContain('止めています')
+    const clientId = await register(app)
+    expect((await alice.get(`/api/oauth/request?${authQuery(clientId, 'team')}`)).json.error).toBe('mcp_disabled')
+    expect((await alice.post('/api/oauth/approve', { query: authQuery(clientId, 'team'), access: 'read' })).status).toBe(403)
+    expect((await alice.get(`/api/oauth/request?${authQuery(clientId, null)}`)).json.wikis).toEqual([]) // not offered in the picker
+    await alice.call('PATCH', `/api/wikis/${w.id}`, { mcpEnabled: true })
+    expect((await rpc(app, 'team', access, 'ping')).status).toBe(200)
   })
 })
