@@ -9,9 +9,11 @@ import { DurableObject } from 'cloudflare:workers'
 import { createApp } from '../server/app.js'
 import { fakeReviser, geminiReviser } from '../server/ai.js'
 import { initSchema, type DB, type SqlParam } from '../server/db.js'
+import { alert, assetsFetch, defineHealth } from './monitor-health.js'
 
 interface Env {
   WIKI: DurableObjectNamespace<WikiServer>
+  ASSETS: Fetcher
   APP_ORIGIN?: string
   GOOGLE_CLIENT_ID?: string
   GOOGLE_CLIENT_SECRET?: string
@@ -66,11 +68,40 @@ export class WikiServer extends DurableObject<Env> {
     }
     return this.app.fetch(req)
   }
+
+  /** Monitor health check: the DO is reachable and its SQLite answers. */
+  monitorPing(): { pages: number } {
+    const row = this.db.prepare('SELECT COUNT(*) AS n FROM pages').get() as { n: number }
+    return { pages: Number(row.n) }
+  }
 }
+
+function wikiStub(env: Env) {
+  return env.WIKI.get(env.WIKI.idFromName('main'))
+}
+
+const health = defineHealth<Env>({
+  service: { id: 'markdown-wiki', name: 'Markdown Wiki' },
+  alertUrls: [alert.cfWorker('markdown-wiki'), alert.github('onishi/markdown-wiki')],
+  checks: [
+    assetsFetch({ assets: (env) => env.ASSETS }),
+    {
+      id: 'wiki-storage',
+      type: 'custom',
+      name: 'Durable Object (SQLite)',
+      async run(env) {
+        const { pages } = await wikiStub(env).monitorPing()
+        return { status: 'ok', message: `${pages} pages` }
+      },
+    },
+  ],
+})
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
-    // Only /api/*, /auth/*, /mcp/*, /oauth/*, /.well-known/* reach the Worker (run_worker_first); everything else is static.
-    return env.WIKI.get(env.WIKI.idFromName('main')).fetch(req)
+    // Only /api/*, /auth/*, /mcp/*, /oauth/*, /.well-known/*, /_monitor/* reach the Worker (run_worker_first); everything else is static.
+    const res = await health.handle(req, env)
+    if (res) return res
+    return wikiStub(env).fetch(req)
   },
 }
